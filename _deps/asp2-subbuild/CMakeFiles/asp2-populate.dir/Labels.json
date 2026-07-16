@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "/home/treetrain1/Documents/git/macros-gd/_deps/asp2-subbuild/CMakeFiles/asp2-populate"
+		},
+		{
+			"file" : "/home/treetrain1/Documents/git/macros-gd/_deps/asp2-subbuild/CMakeFiles/asp2-populate.rule"
+		},
+		{
+			"file" : "/home/treetrain1/Documents/git/macros-gd/_deps/asp2-subbuild/CMakeFiles/asp2-populate-complete.rule"
+		},
+		{
+			"file" : "/home/treetrain1/Documents/git/macros-gd/_deps/asp2-subbuild/asp2-populate-prefix/src/asp2-populate-stamp/asp2-populate-build.rule"
+		},
+		{
+			"file" : "/home/treetrain1/Documents/git/macros-gd/_deps/asp2-subbuild/asp2-populate-prefix/src/asp2-populate-stamp/asp2-populate-configure.rule"
+		},
+		{
+			"file" : "/home/treetrain1/Documents/git/macros-gd/_deps/asp2-subbuild/asp2-populate-prefix/src/asp2-populate-stamp/asp2-populate-download.rule"
+		},
+		{
+			"file" : "/home/treetrain1/Documents/git/macros-gd/_deps/asp2-subbuild/asp2-populate-prefix/src/asp2-populate-stamp/asp2-populate-install.rule"
+		},
+		{
+			"file" : "/home/treetrain1/Documents/git/macros-gd/_deps/asp2-subbuild/asp2-populate-prefix/src/asp2-populate-stamp/asp2-populate-mkdir.rule"
+		},
+		{
+			"file" : "/home/treetrain1/Documents/git/macros-gd/_deps/asp2-subbuild/asp2-populate-prefix/src/asp2-populate-stamp/asp2-populate-patch.rule"
+		},
+		{
+			"file" : "/home/treetrain1/Documents/git/macros-gd/_deps/asp2-subbuild/asp2-populate-prefix/src/asp2-populate-stamp/asp2-populate-test.rule"
+		},
+		{
+			"file" : "/home/treetrain1/Documents/git/macros-gd/_deps/asp2-subbuild/asp2-populate-prefix/src/asp2-populate-stamp/asp2-populate-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"asp2-populate"
+		],
+		"name" : "asp2-populate"
+	}
+}

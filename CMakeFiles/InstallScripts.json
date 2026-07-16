@@ -1,0 +1,16 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/treetrain1/Documents/git/macros-gd/cmake_install.cmake",
+		"/home/treetrain1/Documents/git/macros-gd/geode/cmake_install.cmake",
+		"/home/treetrain1/Documents/git/macros-gd/_deps/result-build/cmake_install.cmake",
+		"/home/treetrain1/Documents/git/macros-gd/_deps/json-build/cmake_install.cmake",
+		"/home/treetrain1/Documents/git/macros-gd/_deps/nontype_functional-build/cmake_install.cmake",
+		"/home/treetrain1/Documents/git/macros-gd/_deps/fmt-build/cmake_install.cmake",
+		"/home/treetrain1/Documents/git/macros-gd/_deps/asp2-build/cmake_install.cmake",
+		"/home/treetrain1/Documents/git/macros-gd/_deps/arc-build/cmake_install.cmake",
+		"/home/treetrain1/Documents/git/macros-gd/_deps/tuliphook-build/cmake_install.cmake",
+		"/home/treetrain1/Documents/git/macros-gd/bindings/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
