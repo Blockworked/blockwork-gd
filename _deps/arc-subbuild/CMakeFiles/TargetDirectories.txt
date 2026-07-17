@@ -1,3 +1,0 @@
-/home/treetrain1/Documents/git/macros-gd/_deps/arc-subbuild/CMakeFiles/arc-populate.dir
-/home/treetrain1/Documents/git/macros-gd/_deps/arc-subbuild/CMakeFiles/edit_cache.dir
-/home/treetrain1/Documents/git/macros-gd/_deps/arc-subbuild/CMakeFiles/rebuild_cache.dir

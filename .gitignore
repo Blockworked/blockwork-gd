@@ -1,0 +1,89 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Macos be like
+**/.DS_Store
+
+# Cache files for Sublime Text
+*.tmlanguage.cache
+*.tmPreferences.cache
+*.stTheme.cache
+
+# Ignore build folders
+**/build
+# Ignore platform specific build folders
+build-*/
+
+# Workspace files are user-specific
+*.sublime-workspace
+
+# ILY vscode
+**/.vscode
+
+# Local History for Visual Studio Code
+.history/
+
+# clangd
+.cache/
+
+# Visual Studio
+.vs/
+
+# CLion
+.idea/
+/cmake-build-*/
+
+# CMake cache/build files (this project builds into build-win/, but
+# guard against configuring straight into the repo root too)
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+build.ninja
+cpm-package-lock.cmake
+install_manifest.txt
+CTestTestfile.cmake
+compile_commands.json
+
+# CPM/CMake FetchContent dependency cache
+_deps/
+
+# Geode codegen/build output
+/bindings/
+/geode/
+
+# Windows SDK cross-compile toolchain cache
+winsdk_lib_symlinks/
+winsdk_vfs_overlay.yaml
+
+# Packaged Geode mod (build output)
+*.geode
