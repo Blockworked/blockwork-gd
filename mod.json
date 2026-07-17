@@ -27,6 +27,13 @@
 			"description": "Send a matching stop command when the attempt ends (death, retry, or completion), so it doesn't bleed into the next attempt.",
 			"type": "bool",
 			"default": true
+		},
+		"open-config": {
+			"name": "Open Config Popup",
+			"description": "Opens this mod's settings popup. Press again to close it. Works in levels and in menus.",
+			"type": "keybind",
+			"category": "universal",
+			"default": "Shift+M"
 		}
 	}
 }
