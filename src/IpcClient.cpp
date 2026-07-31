@@ -10,6 +10,12 @@
 // WinSock2-only call avoided is inet_pton, replaced with inet_addr below.
 #ifdef GEODE_IS_WINDOWS
 #pragma comment(lib, "ws2_32.lib")
+#else
+#include <arpa/inet.h>
+#include <csignal>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #endif
 
 using namespace geode::prelude;
@@ -96,7 +102,55 @@ void IpcClient::threadLoop() {
 #else
 
 void IpcClient::threadLoop() {
-    log::warn("macros: IPC client is only implemented on Windows");
+    // A dropped connection makes send() raise SIGPIPE on POSIX, which
+    // defaults to terminating the whole process - i.e. crashing the game.
+    // Windows has no equivalent signal, so this is only needed here.
+    std::signal(SIGPIPE, SIG_IGN);
+
+    while (true) {
+        auto port = static_cast<uint16_t>(Mod::get()->getSettingValue<int64_t>("port"));
+
+        int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (sock < 0) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            continue;
+        }
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port);
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+        if (connect(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+            close(sock);
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            continue;
+        }
+
+        log::debug("macros: connected to 127.0.0.1:{}", port);
+
+        bool connectionAlive = true;
+        while (connectionAlive) {
+            std::string cmd;
+            {
+                std::unique_lock lock(m_mutex);
+                m_cv.wait(lock, [this] { return !m_queue.empty(); });
+                cmd = std::move(m_queue.front());
+                m_queue.pop_front();
+            }
+
+            std::string line = cmd + "\n";
+            ssize_t sent = send(sock, line.c_str(), line.size(), 0);
+            if (sent < 0) {
+                log::debug("macros: send failed, will reconnect");
+                connectionAlive = false;
+            } else {
+                log::debug("macros: sent {}", cmd);
+            }
+        }
+
+        close(sock);
+    }
 }
 
 #endif

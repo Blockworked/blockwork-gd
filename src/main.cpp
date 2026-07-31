@@ -1,6 +1,7 @@
 #include <Geode/Geode.hpp>
 #include <Geode/loader/SettingV3.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
+#include <Geode/modify/MenuLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/ui/GeodeUI.hpp>
 #include <Geode/ui/Popup.hpp>
@@ -11,15 +12,37 @@ using namespace geode::prelude;
 
 namespace {
 
+// The game's initial boot splash (LoadingLayer) doesn't have all of the UI
+// sprite sheets in CCSpriteFrameCache yet, so building any UI before it hands
+// off to the main menu gets the pink/black missing-texture placeholder
+// instead of the real art. MenuLayer::init is the first reliable, hookable
+// signal that boot has actually finished (LoadingLayer::loadingFinished()
+// itself is inlined in the game binary, so Geode can't hook it directly);
+// it also re-fires every time the player returns to the main menu later,
+// which is harmless since this only ever needs to flip on once.
+bool gameFinishedLoading = false;
+
 // Kept alive for the mod's whole lifetime so the listener never gets torn
 // down; ListenerHandle's destructor would otherwise deregister it.
 ListenerHandle configPopupCloseListener;
 
 // Tracks the currently-open popup (if any) so pressing the keybind again
 // closes it instead of stacking a duplicate on top. Ref keeps it valid for
-// as long as we hold it; the close listener below clears it if the popup is
-// dismissed some other way (close button, Escape, clicking outside).
+// as long as we hold it; the close listener below clears it once the popup
+// is actually gone (close button, Escape, clicking outside, or our own
+// keyBackClicked() call below).
 Ref<Popup> openConfigPopup;
+
+// keyBackClicked() doesn't close the settings popup immediately if it has
+// uncommitted changes - it puts up an "Unsaved Changes" confirmation first,
+// and only sends Popup::CloseEvent (which clears openConfigPopup above) once
+// that's resolved. Spamming the hotkey while that confirmation is pending
+// must not call keyBackClicked() again on the same popup: that would stack a
+// second confirmation on top, and two independent Discard clicks each
+// closing the same popup is a use-after-free on the second one. This flag
+// makes every press after the first one a no-op until the popup is
+// confirmed gone.
+bool closingConfigPopup = false;
 
 // Bound to the "open-config" keybind setting (rebindable from this mod's
 // settings, like any other keybind), which opens the mod's own settings
@@ -29,11 +52,27 @@ Ref<Popup> openConfigPopup;
 // setting opts in, so no manual IME check is needed here.
 void setupConfigPopupHotkey() {
     listenForKeybindSettingPresses("open-config", [](Keybind const&, bool down, bool repeat, double) {
-        if (!down || repeat) {
+        if (!down || repeat || !gameFinishedLoading) {
             return;
         }
 
+        // If the scene hosting the popup got torn down without going through
+        // our close path (e.g. the loading screen finishing and handing off
+        // to the menu while the popup was open, opened too early during
+        // boot), the popup is orphaned but not destroyed - our Ref is still
+        // keeping it alive. Trying to close a scene-less zombie popup is
+        // what led to the earlier crash, so just forget about it and treat
+        // this press as opening a fresh one instead.
+        if (openConfigPopup && !openConfigPopup->getParent()) {
+            openConfigPopup = nullptr;
+            closingConfigPopup = false;
+        }
+
         if (openConfigPopup) {
+            if (closingConfigPopup) {
+                return;
+            }
+            closingConfigPopup = true;
             // keyBackClicked() is protected on Popup itself, but public on
             // FLAlertLayer; this runs the same close path as pressing
             // Escape (including the unsaved-changes prompt), not a raw removal.
@@ -45,9 +84,10 @@ void setupConfigPopupHotkey() {
         // `true`) is the one that returns the Popup* we need to track.
         if (auto popup = openSettingsPopup(Mod::get(), true)) {
             openConfigPopup = popup;
+            closingConfigPopup = false;
             configPopupCloseListener = Popup::CloseEvent(popup).listen([] {
                 openConfigPopup = nullptr;
-                return ListenerResult::Propagate;
+                closingConfigPopup = false;
             });
         }
     });
@@ -63,6 +103,26 @@ void setupConfigPopupHotkey() {
 // cases, instead of guessing at a fixed number of ticks or lifecycle hooks.
 bool waitingForAttemptStart = false;
 
+// Real time (accumulated dt, not tick count) since m_levelTime first ticked
+// positive. A fresh entry can still be finishing texture decompression and
+// sprite-cache population for a moment right as gameplay starts, which
+// briefly slows real-world tick time even though the level clock itself is
+// already moving - a retry has no such contention. Macros' recording clock
+// is wall-clock, not level-time, so sending the start trigger mid-hitch
+// bakes that attempt-1-only stutter straight into the first recorded Wait.
+//
+// This used to require a streak of consecutive un-hitched ticks instead of
+// a flat time budget, but that made the trigger's own timing noisy: any
+// single stray slow tick - for reasons that have nothing to do with loading
+// (OS scheduling, monitor refresh jitter, background disk I/O) - reset the
+// streak and pushed the trigger out further, so the delay before it fired
+// varied attempt to attempt instead of staying constant. Unconditionally
+// waiting out a fixed grace period is deterministic: every attempt, fresh or
+// retry, gets exactly the same delay after gameplay visually starts,
+// regardless of whether any individual tick happened to hitch.
+double elapsedSinceLevelStart = 0.0;
+constexpr double kStartGracePeriod = 0.2; // seconds
+
 // destroyPlayer() (death) and resetLevel() (death's delayed restart, or a
 // manual retry) can both want to end the same attempt. This dedupes so
 // death only sends the stop command once, right away, instead of again
@@ -71,6 +131,7 @@ bool attemptEndSent = false;
 
 void requestAttemptStart() {
     waitingForAttemptStart = true;
+    elapsedSinceLevelStart = 0.0;
     attemptEndSent = false;
 }
 
@@ -97,6 +158,16 @@ void sendAttemptEnd() {
 }
 
 }
+
+class $modify(MenuLayer) {
+    bool init() {
+        if (!MenuLayer::init()) {
+            return false;
+        }
+        gameFinishedLoading = true;
+        return true;
+    }
+};
 
 class $modify(PlayLayer) {
     bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
@@ -147,9 +218,14 @@ class $modify(GJBaseGameLayer) {
         // actually moving - that's the real start of gameplay, whether this
         // tick comes right after a retry or several ticks into a fresh
         // entry's loading pause.
-        if (waitingForAttemptStart
-            && static_cast<GJBaseGameLayer*>(PlayLayer::get()) == static_cast<GJBaseGameLayer*>(this)
-            && m_gameState.m_levelTime > 0.0) {
+        if (!waitingForAttemptStart
+            || static_cast<GJBaseGameLayer*>(PlayLayer::get()) != static_cast<GJBaseGameLayer*>(this)
+            || m_gameState.m_levelTime <= 0.0) {
+            return;
+        }
+
+        elapsedSinceLevelStart += dt;
+        if (elapsedSinceLevelStart >= kStartGracePeriod) {
             waitingForAttemptStart = false;
             sendAttemptStart();
         }
