@@ -3,10 +3,10 @@
 	"gd": {
 		"win": "2.2081"
 	},
-	"id": "treetrain1.macros",
+	"id": "dev.ethanstokes.macros",
 	"name": "macros",
 	"version": "v1.0.0",
-	"developer": "treetrain1",
+	"developer": "EthanRStokes",
 	"description": "Tells the Macros app (running on the host) to start recording or run the current macro, synced to level attempts.",
 	"settings": {
 		"port": {

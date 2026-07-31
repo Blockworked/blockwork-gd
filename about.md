@@ -1,6 +1,6 @@
 # Macros Bridge
 
-Connects Geometry Dash to the [Macros](https://github.com/treetrain1) app over a
+Connects Geometry Dash to the [Macros](https://github.com/EthanRStokes/Macros) app over a
 local TCP connection, so recording or playback is synced to exactly when a level
 attempt starts and ends instead of relying on a manually-pressed hotkey.
 
