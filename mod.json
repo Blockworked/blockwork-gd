@@ -1,40 +1,43 @@
 {
-	"geode": "5.7.1",
-	"gd": {
-		"win": "2.2081",
-		"mac": "*"
-	},
-	"id": "dev.ethanstokes.macros",
-	"name": "macros",
-	"version": "v0.1.0",
-	"developer": "EthanRStokes",
-	"description": "Tells the Macros app (running on the host) to start recording or run the current macro, synced to level attempts.",
-	"settings": {
-		"port": {
-			"name": "Macros App Port",
-			"description": "TCP port the Macros app's local control interface listens on (must match Macros' own port setting).",
-			"type": "int",
-			"default": 47821
-		},
-		"action": {
-			"name": "On Level Start",
-			"description": "What to tell Macros to do when an attempt starts.",
-			"type": "string",
-			"one-of": ["run_macro", "start_recording"],
-			"default": "run_macro"
-		},
-		"stop-on-end": {
-			"name": "Stop on Attempt End",
-			"description": "Send a matching stop command when the attempt ends (death, retry, or completion), so it doesn't bleed into the next attempt.",
-			"type": "bool",
-			"default": true
-		},
-		"open-config": {
-			"name": "Open Config Popup",
-			"description": "Opens this mod's settings popup. Press again to close it. Works in levels and in menus.",
-			"type": "keybind",
-			"category": "universal",
-			"default": "Shift+M"
-		}
-	}
+  "geode": "5.7.1",
+  "gd": {
+    "win": "2.2081",
+    "mac": "*"
+  },
+  "id": "dev.ethanstokes.macros",
+  "name": "macros",
+  "version": "v0.1.1",
+  "developer": "EthanRStokes",
+  "description": "Tells the Macros app (running on the host) to start recording or run the current macro, synced to level attempts.",
+  "settings": {
+    "port": {
+      "name": "Macros App Port",
+      "description": "TCP port the Macros app's local control interface listens on (must match Macros' own port setting).",
+      "type": "int",
+      "default": 47821
+    },
+    "action": {
+      "name": "On Level Start",
+      "description": "What to tell Macros to do when an attempt starts.",
+      "type": "string",
+      "one-of": [
+        "run_macro",
+        "start_recording"
+      ],
+      "default": "run_macro"
+    },
+    "stop-on-end": {
+      "name": "Stop on Attempt End",
+      "description": "Send a matching stop command when the attempt ends (death, retry, or completion), so it doesn't bleed into the next attempt.",
+      "type": "bool",
+      "default": true
+    },
+    "open-config": {
+      "name": "Open Config Popup",
+      "description": "Opens this mod's settings popup. Press again to close it. Works in levels and in menus.",
+      "type": "keybind",
+      "category": "universal",
+      "default": "Shift+M"
+    }
+  }
 }
