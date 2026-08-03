@@ -10,6 +10,12 @@
 	"developer": "EthanRStokes",
 	"description": "Records or runs a Macros macro directly, in-process, synced to level attempts.",
 	"settings": {
+		"enabled": {
+			"name": "Enabled",
+			"description": "When off, this mod won't record or run any macro on attempt start/end - level attempts play out completely untouched.",
+			"type": "bool",
+			"default": false
+		},
 		"macros-dir": {
 			"name": "Macros Config Dir Override (Proton only)",
 			"description": "Leave blank on native Windows/macOS. Under Proton, set this to the Wine Z:-mapped path to the Linux Macros config dir, e.g. Z:\\home\\yourname\\.config, so this mod reads/writes the same macro files as the desktop app.",
@@ -36,6 +42,13 @@
 			"type": "keybind",
 			"category": "universal",
 			"default": "Shift+M"
+		},
+		"open-macros": {
+			"name": "Open Macros Panel",
+			"description": "Opens a panel to create, rename, delete, and pick which macro is active, and to clear the active macro's recorded instructions. Press again to close it. Works in levels and in menus.",
+			"type": "keybind",
+			"category": "universal",
+			"default": "Shift+N"
 		}
 	},
 	"resources": {

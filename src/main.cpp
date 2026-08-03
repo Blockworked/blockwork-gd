@@ -1,11 +1,13 @@
 #include <Geode/Geode.hpp>
 #include <Geode/loader/SettingV3.hpp>
+#include <Geode/modify/AppDelegate.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/MenuLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/ui/GeodeUI.hpp>
 #include <Geode/ui/Popup.hpp>
 
+#include "MacrosPopup.hpp"
 #include "macros_ffi.h"
 
 using namespace geode::prelude;
@@ -31,9 +33,19 @@ void onMacrosLog(const char* msg) {
 // which is harmless since this only ever needs to flip on once.
 bool gameFinishedLoading = false;
 
+// Tracks OS-level window focus, kept up to date by the AppDelegate hooks
+// further down (applicationDidEnterBackground/applicationWillEnterForeground).
+// Starts true since the game obviously has focus at launch and neither hook
+// fires just from the process starting up. Checked at attempt start so a
+// level that begins while the player is tabbed out into another window
+// doesn't start recording/running into it; the focus-loss hook itself is
+// what handles focus being lost mid-attempt instead.
+bool windowFocused = true;
+
 // Kept alive for the mod's whole lifetime so the listener never gets torn
 // down; ListenerHandle's destructor would otherwise deregister it.
 ListenerHandle configPopupCloseListener;
+ListenerHandle macrosPopupCloseListener;
 
 // Tracks the currently-open popup (if any) so pressing the keybind again
 // closes it instead of stacking a duplicate on top. Ref keeps it valid for
@@ -41,6 +53,11 @@ ListenerHandle configPopupCloseListener;
 // is actually gone (close button, Escape, clicking outside, or our own
 // keyBackClicked() call below).
 Ref<Popup> openConfigPopup;
+
+// Same idea as openConfigPopup, but for MacrosPopup - a plain custom Popup
+// rather than a settings popup, so it has no "unsaved changes" state to
+// worry about; keyBackClicked() closes it outright, no closingX guard needed.
+Ref<Popup> openMacrosPopup;
 
 // keyBackClicked() doesn't close the settings popup immediately if it has
 // uncommitted changes - it puts up an "Unsaved Changes" confirmation first,
@@ -102,6 +119,39 @@ void setupConfigPopupHotkey() {
     });
 }
 
+// Bound to the "open-macros" keybind setting, opening the macro
+// creation/selection/clear panel (MacrosPopup). Simpler than
+// setupConfigPopupHotkey above since MacrosPopup is a plain Popup with no
+// unsaved-changes prompt on close - keyBackClicked() always closes it
+// immediately, so there's no closing-in-progress state to guard against.
+void setupMacrosPopupHotkey() {
+    listenForKeybindSettingPresses("open-macros", [](Keybind const&, bool down, bool repeat, double) {
+        if (!down || repeat || !gameFinishedLoading) {
+            return;
+        }
+
+        // Same orphaned-popup defense as setupConfigPopupHotkey: if the
+        // scene got torn down without going through our close path, forget
+        // the zombie Ref instead of trying to close it.
+        if (openMacrosPopup && !openMacrosPopup->getParent()) {
+            openMacrosPopup = nullptr;
+        }
+
+        if (openMacrosPopup) {
+            static_cast<FLAlertLayer*>(openMacrosPopup.data())->keyBackClicked();
+            return;
+        }
+
+        if (auto popup = MacrosPopup::create()) {
+            popup->show();
+            openMacrosPopup = popup;
+            macrosPopupCloseListener = Popup::CloseEvent(popup).listen([] {
+                openMacrosPopup = nullptr;
+            });
+        }
+    });
+}
+
 // init()/resetLevel() only arm this; the actual start command is sent once
 // GJBaseGameLayer::update() observes the level's own clock (m_gameState.
 // m_levelTime) actually ticking. A retry has no loading to do, so that
@@ -149,6 +199,18 @@ bool attemptEndSent = false;
 // user does to the setting mid-attempt.
 std::string currentAttemptAction;
 
+// Same capture-once-reuse-at-end reasoning as currentAttemptAction above,
+// applied to whether this attempt actually started anything - true only if
+// both the "enabled" setting and windowFocused held at attempt-start time.
+// If the user flips "enabled" off, or the window loses focus, mid-attempt
+// after a recording/run already started while both were fine,
+// sendAttemptEnd() still has to send the matching stop - otherwise that
+// recording/run is orphaned exactly like a mid-attempt "action" switch
+// would orphan it. Conversely, if either was false at attempt start
+// (nothing was ever sent), the end must stay a no-op even if both go back
+// to true before the attempt finishes.
+bool currentAttemptMacrosEnabled = false;
+
 void requestAttemptStart() {
     waitingForAttemptStart = true;
     elapsedSinceLevelStart = 0.0;
@@ -156,6 +218,27 @@ void requestAttemptStart() {
 }
 
 void sendAttemptStart() {
+    // requestAttemptStart() already reset this when the attempt was armed,
+    // but anything that fires sendAttemptEnd() during the grace-period
+    // window between arming and actually starting (observed in practice:
+    // pauseGame, or a rapid death/retry storm right as the level loads)
+    // would flip it back to true before the real attempt ever begins -
+    // and nothing else would reset it again until the *next* attempt,
+    // silently no-op'ing every real stop for this entire attempt. This is
+    // the actual start, so this is the point that must be true regardless
+    // of anything that happened while waiting for it.
+    attemptEndSent = false;
+    bool enabledSetting = Mod::get()->getSettingValue<bool>("enabled");
+    // A level starting while the player is tabbed out shouldn't start
+    // recording/running into whatever window does have focus - the
+    // AppDelegate focus-loss hook only covers focus lost *during* an
+    // attempt, not an attempt beginning while focus is already elsewhere
+    // (e.g. a fast retry landing before the player has tabbed back in).
+    currentAttemptMacrosEnabled = enabledSetting && windowFocused;
+    if (!currentAttemptMacrosEnabled) {
+        log::debug("macros: skipping attempt start (enabled={}, windowFocused={})", enabledSetting, windowFocused);
+        return;
+    }
     currentAttemptAction = Mod::get()->getSettingValue<std::string>("action");
     int result = (currentAttemptAction == "start_recording") ? macros_start_recording() : macros_run_macro(nullptr);
     if (result != 0) {
@@ -166,7 +249,12 @@ void sendAttemptStart() {
 }
 
 void sendAttemptEnd() {
-    if (attemptEndSent || !Mod::get()->getSettingValue<bool>("stop-on-end")) {
+    // TEMPORARY: see exactly why this might bail early.
+    log::info(
+        "macros: sendAttemptEnd called (attemptEndSent={}, stop-on-end={}, currentAttemptAction='{}')",
+        attemptEndSent, Mod::get()->getSettingValue<bool>("stop-on-end"), currentAttemptAction
+    );
+    if (attemptEndSent || !Mod::get()->getSettingValue<bool>("stop-on-end") || !currentAttemptMacrosEnabled) {
         return;
     }
     attemptEndSent = true;
@@ -242,6 +330,21 @@ class $modify(PlayLayer) {
         // Leaving the level back to the menu: end the attempt in progress.
         sendAttemptEnd();
     }
+
+    void pauseGame(bool unfocused) {
+        PlayLayer::pauseGame(unfocused);
+        // TEMPORARY: confirm this hook actually fires on Escape at all
+        // before trusting anything past this line.
+        log::info("macros: pauseGame hook fired (unfocused={})", unfocused);
+        // Opening the pause menu (Escape, or losing window focus) isn't
+        // gameplay - without this, whatever the player does in the pause
+        // menu (navigating to this mod's own config popup, in particular)
+        // gets captured right along with real gameplay input. Reuses
+        // sendAttemptEnd() as-is: same stop-on-end setting, same action
+        // pairing, and a no-op if the attempt already ended (e.g. paused
+        // after already dying).
+        sendAttemptEnd();
+    }
 };
 
 class $modify(GJBaseGameLayer) {
@@ -263,6 +366,45 @@ class $modify(GJBaseGameLayer) {
             waitingForAttemptStart = false;
             sendAttemptStart();
         }
+    }
+};
+
+class $modify(AppDelegate) {
+    void applicationDidEnterBackground() {
+        AppDelegate::applicationDidEnterBackground();
+        windowFocused = false;
+        // The whole game window losing OS focus (alt-tab, clicking another
+        // window, the screen locking, ...) - not the same thing as the
+        // in-level pause menu opening, and not scoped to PlayLayer at all:
+        // this fires no matter what's on screen (menu, editor, a level).
+        // Recording and running both drive real OS-level input
+        // (SendInput/CGEvent), so leaving either active once some other
+        // window has focus means every subsequent keystroke/click either
+        // gets recorded into the macro or gets played back into whatever
+        // app the user tabbed into, instead of GD. Stopping both
+        // unconditionally here - ignoring "enabled" and "stop-on-end",
+        // which are attempt-lifecycle policy, not input-safety - and
+        // independently of sendAttemptEnd()/attemptEndSent's own
+        // bookkeeping is what makes this a hard safety net rather than
+        // just another path to the same attempt-end logic. Both calls are
+        // no-ops if nothing of that kind was active.
+        int recordingResult = macros_stop_recording();
+        if (recordingResult < 0) {
+            log::warn("macros: stop_recording on focus loss failed (code {})", recordingResult);
+        }
+        int loopResult = macros_stop_loop();
+        if (loopResult != 0) {
+            log::warn("macros: stop_loop on focus loss failed (code {})", loopResult);
+        }
+    }
+
+    void applicationWillEnterForeground() {
+        AppDelegate::applicationWillEnterForeground();
+        // Regaining focus doesn't resume anything on its own - it just
+        // clears the guard sendAttemptStart() checks, so the *next* attempt
+        // (not the one already in progress, if any) is allowed to
+        // record/run again.
+        windowFocused = true;
     }
 };
 
@@ -290,4 +432,5 @@ $on_mod(Loaded) {
         log::info("macros: initialized, config dir override = '{}'", dir.empty() ? "<none, using OS default>" : dir);
     }
     setupConfigPopupHotkey();
+    setupMacrosPopupHotkey();
 }
