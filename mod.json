@@ -8,13 +8,14 @@
 	"name": "macros",
 	"version": "v0.1.0",
 	"developer": "EthanRStokes",
-	"description": "Tells the Macros app (running on the host) to start recording or run the current macro, synced to level attempts.",
+	"description": "Records or runs a Macros macro directly, in-process, synced to level attempts.",
 	"settings": {
-		"port": {
-			"name": "Macros App Port",
-			"description": "TCP port the Macros app's local control interface listens on (must match Macros' own port setting).",
-			"type": "int",
-			"default": 47821
+		"macros-dir": {
+			"name": "Macros Config Dir Override (Proton only)",
+			"description": "Leave blank on native Windows/macOS. Under Proton, set this to the Wine Z:-mapped path to the Linux Macros config dir, e.g. Z:\\home\\yourname\\.config, so this mod reads/writes the same macro files as the desktop app.",
+			"type": "string",
+			"default": "",
+			"filter": "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:\\/._- "
 		},
 		"action": {
 			"name": "On Level Start",
@@ -36,5 +37,10 @@
 			"category": "universal",
 			"default": "Shift+M"
 		}
+	},
+	"resources": {
+		"files": [
+			"resources/linux-input.so"
+		]
 	}
 }

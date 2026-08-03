@@ -6,11 +6,20 @@
 #include <Geode/ui/GeodeUI.hpp>
 #include <Geode/ui/Popup.hpp>
 
-#include "IpcClient.hpp"
+#include "macros_ffi.h"
 
 using namespace geode::prelude;
 
 namespace {
+
+// Routes every `tracing::info!`/`warn!`/etc. call from the Rust side (both
+// macros-ffi's own and macros-core's, when linked in) into Geode's logger.
+// Without this registered, those calls have no subscriber and are silently
+// dropped — there is no other way to see Rust-side diagnostics (e.g. Wine
+// detection, bridge setup) in Geode's log file.
+void onMacrosLog(const char* msg) {
+    log::info("[macros] {}", msg);
+}
 
 // The game's initial boot splash (LoadingLayer) doesn't have all of the UI
 // sprite sheets in CCSpriteFrameCache yet, so building any UI before it hands
@@ -129,6 +138,17 @@ constexpr double kStartGracePeriod = 0.2; // seconds
 // when resetLevel() follows it.
 bool attemptEndSent = false;
 
+// Captured once in sendAttemptStart() and reused (not re-read) in
+// sendAttemptEnd() — the "action" setting is a live dropdown the user can
+// change at any time, including mid-attempt while a recording is still
+// active. Re-reading it fresh at end-time meant switching the setting
+// before backing out of the level would call stop_loop instead of
+// stop_recording, silently orphaning the in-progress recording (it just
+// stayed active forever, capturing into a queue nothing ever drained).
+// Pairing start/end to the same value fixes that regardless of what the
+// user does to the setting mid-attempt.
+std::string currentAttemptAction;
+
 void requestAttemptStart() {
     waitingForAttemptStart = true;
     elapsedSinceLevelStart = 0.0;
@@ -136,11 +156,12 @@ void requestAttemptStart() {
 }
 
 void sendAttemptStart() {
-    auto action = Mod::get()->getSettingValue<std::string>("action");
-    if (action == "start_recording") {
-        macros::IpcClient::get().sendCommand(R"({"cmd":"start_recording"})");
+    currentAttemptAction = Mod::get()->getSettingValue<std::string>("action");
+    int result = (currentAttemptAction == "start_recording") ? macros_start_recording() : macros_run_macro(nullptr);
+    if (result != 0) {
+        log::warn("macros: {} failed (code {})", currentAttemptAction, result);
     } else {
-        macros::IpcClient::get().sendCommand(R"({"cmd":"run_macro"})");
+        log::debug("macros: {} ok", currentAttemptAction);
     }
 }
 
@@ -149,11 +170,24 @@ void sendAttemptEnd() {
         return;
     }
     attemptEndSent = true;
-    auto action = Mod::get()->getSettingValue<std::string>("action");
-    if (action == "start_recording") {
-        macros::IpcClient::get().sendCommand(R"({"cmd":"stop_recording"})");
+    if (currentAttemptAction == "start_recording") {
+        // Positive = instructions captured and saved, 0 = capture hook
+        // produced nothing at all, negative = couldn't resolve/save.
+        int result = macros_stop_recording();
+        if (result < 0) {
+            log::warn("macros: stop_recording failed (code {})", result);
+        } else if (result == 0) {
+            log::warn("macros: stop_recording ok, but captured 0 instructions - input capture isn't picking anything up");
+        } else {
+            log::info("macros: stop_recording ok, captured {} instructions", result);
+        }
     } else {
-        macros::IpcClient::get().sendCommand(R"({"cmd":"stop_loop"})");
+        int result = macros_stop_loop();
+        if (result != 0) {
+            log::warn("macros: stop_loop failed (code {})", result);
+        } else {
+            log::debug("macros: stop_loop ok");
+        }
     }
 }
 
@@ -233,6 +267,27 @@ class $modify(GJBaseGameLayer) {
 };
 
 $on_mod(Loaded) {
-    macros::IpcClient::get().start();
+    // Must be registered before macros_init (or anything else that might
+    // log) so no diagnostics from setup itself get silently dropped.
+    macros_set_log_callback(&onMacrosLog);
+
+    // Must run on the main thread — macOS's Accessibility prompt
+    // (behind macros_init) requires it, and $on_mod(Loaded) already runs
+    // there.
+    auto dir = Mod::get()->getSettingValue<std::string>("macros-dir");
+    // Resolved unconditionally (cheap, harmless if unused) — macros_init
+    // only actually uses this if it detects it's running under Wine on a
+    // Linux host (Proton), where WH_KEYBOARD_LL/WH_MOUSE_LL and SendInput
+    // don't work, so it launches this as a native Linux helper process
+    // instead. Native Windows/macOS ignore it entirely.
+    auto bridgePath = CCFileUtils::get()->fullPathForFilename("linux-input.so"_spr, true);
+    int result = macros_init(dir.empty() ? nullptr : dir.c_str(), bridgePath.empty() ? nullptr : bridgePath.c_str());
+    if (result != 0) {
+        log::warn("macros: macros_init failed (code {}) - no input backend for this platform", result);
+    } else if (macros_grab_failed()) {
+        log::warn("macros: input capture/emission unavailable (grab failed) - check permissions");
+    } else {
+        log::info("macros: initialized, config dir override = '{}'", dir.empty() ? "<none, using OS default>" : dir);
+    }
     setupConfigPopupHotkey();
 }
