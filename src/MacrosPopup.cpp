@@ -10,21 +10,21 @@
 #include <functional>
 #include <utility>
 
-#include "macros_ffi.h"
+#include "blockwork_ffi.h"
 
 using namespace geode::prelude;
 
 namespace {
-// Owns a macros-ffi string for its scope and always frees it, even on an
-// early return - every macros_ffi.h function that hands back a `char*`
-// requires the caller to free it via macros_free_string, and this is the one
+// Owns a blockwork-ffi string for its scope and always frees it, even on an
+// early return - every blockwork_ffi.h function that hands back a `char*`
+// requires the caller to free it via blockwork_free_string, and this is the one
 // place that happens so no call site below has to remember it.
 struct FfiString {
     char* ptr;
     FfiString(char* p) : ptr(p) {}
     ~FfiString() {
         if (ptr) {
-            macros_free_string(ptr);
+            blockwork_free_string(ptr);
         }
     }
     FfiString(FfiString const&) = delete;
@@ -64,7 +64,7 @@ protected:
 
     void onSave(CCObject*) {
         auto name = m_input->getString();
-        int result = macros_rename_macro(name.c_str());
+        int result = blockwork_rename_macro(name.c_str());
         if (result != 0) {
             Notification::create("Failed to rename macro", NotificationIcon::Error)->show();
             return;
@@ -150,7 +150,7 @@ void MacrosPopup::reloadMacros() {
     m_macros.clear();
     m_selectedIndex = -1;
 
-    if (FfiString listJson = macros_list_macros()) {
+    if (FfiString listJson = blockwork_list_macros()) {
         auto parsed = matjson::parse(listJson.ptr);
         if (parsed) {
             for (auto& entry : parsed.unwrap()) {
@@ -162,7 +162,7 @@ void MacrosPopup::reloadMacros() {
         }
     }
 
-    if (FfiString selectedId = macros_get_selected_macro_id()) {
+    if (FfiString selectedId = blockwork_get_selected_macro_id()) {
         std::string id(selectedId.ptr);
         for (size_t i = 0; i < m_macros.size(); i++) {
             if (m_macros[i].id == id) {
@@ -190,7 +190,7 @@ void MacrosPopup::selectCurrent() {
     if (m_selectedIndex < 0 || m_selectedIndex >= static_cast<int>(m_macros.size())) {
         return;
     }
-    macros_select_macro(m_macros[m_selectedIndex].id.c_str());
+    blockwork_select_macro(m_macros[m_selectedIndex].id.c_str());
     updateSelectedLabel();
 }
 
@@ -215,7 +215,7 @@ void MacrosPopup::onNextMacro(CCObject*) {
 }
 
 void MacrosPopup::onCreateMacro(CCObject*) {
-    int result = macros_create_macro(nullptr);
+    int result = blockwork_create_macro(nullptr);
     if (result != 0) {
         Notification::create("Failed to create macro", NotificationIcon::Error)->show();
         return;
@@ -251,7 +251,7 @@ void MacrosPopup::onDeleteMacro(CCObject*) {
             if (!btn2) {
                 return;
             }
-            int result = macros_delete_macro();
+            int result = blockwork_delete_macro();
             if (result != 0) {
                 Notification::create("Failed to delete macro", NotificationIcon::Error)->show();
                 return;
@@ -277,7 +277,7 @@ void MacrosPopup::onClearInstructions(CCObject*) {
             if (!btn2) {
                 return;
             }
-            int result = macros_clear_recording_target_instructions();
+            int result = blockwork_clear_recording_target_instructions();
             if (result < 0) {
                 Notification::create("Failed to clear instructions", NotificationIcon::Error)->show();
             } else {

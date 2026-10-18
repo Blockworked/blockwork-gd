@@ -8,7 +8,7 @@ else()
 endif()
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 
-project(macros VERSION 1.0.0)
+project(blockwork VERSION 1.0.0)
 
 # Add all source files inside src (recursively)
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*.cpp)
@@ -27,30 +27,30 @@ add_subdirectory($ENV{GEODE_SDK} ${CMAKE_CURRENT_BINARY_DIR}/geode)
 # Set up dependencies, resources, and link Geode.
 setup_geode_mod(${PROJECT_NAME})
 
-# macros-ffi: the Rust recording/playback engine (macros-core), embedded
+# blockwork-ffi: the Rust recording/playback engine (blockwork-core), embedded
 # directly instead of talked to over the loopback IPC connection the old
-# IpcClient used. Built separately (see macros-ffi/build-windows.sh and
-# build-macos.sh in the Macros repo) since this is a different Cargo
+# IpcClient used. Built separately (see blockwork-ffi/build-windows.sh and
+# build-macos.sh in the Blockwork repo) since this is a different Cargo
 # workspace with no submodule relationship to this one — point these at the
 # artifacts that script produces.
-if (NOT DEFINED MACROS_FFI_LIB)
-    message(FATAL_ERROR "MACROS_FFI_LIB must point to the built macros_ffi static library (run macros-ffi/build-windows.sh or build-macos.sh in the Macros repo, then pass e.g. -DMACROS_FFI_LIB=/path/to/macros_ffi.lib)")
+if (NOT DEFINED BLOCKWORK_FFI_LIB)
+    message(FATAL_ERROR "BLOCKWORK_FFI_LIB must point to the built blockwork_ffi static library (run blockwork-ffi/build-windows.sh or build-macos.sh in the Blockwork repo, then pass e.g. -DBLOCKWORK_FFI_LIB=/path/to/blockwork_ffi.lib)")
 endif()
-if (NOT DEFINED MACROS_FFI_INCLUDE_DIR)
-    message(FATAL_ERROR "MACROS_FFI_INCLUDE_DIR must point to the directory containing the cbindgen-generated macros_ffi.h (macros-ffi/include in the Macros repo)")
+if (NOT DEFINED BLOCKWORK_FFI_INCLUDE_DIR)
+    message(FATAL_ERROR "BLOCKWORK_FFI_INCLUDE_DIR must point to the directory containing the cbindgen-generated blockwork_ffi.h (blockwork-ffi/include in the Blockwork repo)")
 endif()
 
-target_include_directories(${PROJECT_NAME} PRIVATE ${MACROS_FFI_INCLUDE_DIR})
+target_include_directories(${PROJECT_NAME} PRIVATE ${BLOCKWORK_FFI_INCLUDE_DIR})
 
 if (WIN32)
     # kernel32/ntdll/userenv/ws2_32/dbghelp: exactly what Rust's std +
     # our dependency tree need on *-pc-windows-msvc, per
     # `cargo rustc -- --print native-static-libs` (see build-windows.sh's
-    # own output) — not guessed, re-verify that list if macros-ffi's Rust
+    # own output) — not guessed, re-verify that list if blockwork-ffi's Rust
     # dependencies change.
     target_link_libraries(${PROJECT_NAME}
-        ${MACROS_FFI_LIB}
-        kernel32 ntdll userenv ws2_32 dbghelp
+        ${BLOCKWORK_FFI_LIB}
+        kernel32 ntdll userenv ws2_32 dbghelp bcrypt
     )
 endif()
 
@@ -58,7 +58,7 @@ if (APPLE AND NOT IOS)
     find_library(CORE_FOUNDATION_LIB CoreFoundation REQUIRED)
     find_library(APPLICATION_SERVICES_LIB ApplicationServices REQUIRED)
     target_link_libraries(${PROJECT_NAME}
-        ${MACROS_FFI_LIB}
+        ${BLOCKWORK_FFI_LIB}
         ${CORE_FOUNDATION_LIB}
         ${APPLICATION_SERVICES_LIB}
     )

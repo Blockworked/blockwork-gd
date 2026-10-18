@@ -26,12 +26,12 @@ protected:
 
     bool init();
 
-    // Re-reads the macro list and current selection from macros-ffi (macro
+    // Re-reads the macro list and current selection from blockwork-ffi (macro
     // files are also written to by the desktop app and by recording, so this
     // is called every time the popup opens rather than cached).
     void reloadMacros();
     void updateSelectedLabel();
-    // Tells macros-ffi about m_selectedIndex and refreshes the label; a
+    // Tells blockwork-ffi about m_selectedIndex and refreshes the label; a
     // no-op if the index isn't currently valid.
     void selectCurrent();
 

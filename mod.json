@@ -4,11 +4,11 @@
 		"win": "2.2081",
 		"mac": "*"
 	},
-	"id": "dev.ethanstokes.macros",
-	"name": "macros",
+	"id": "com.blockworked.blockwork",
+	"name": "blockwork",
 	"version": "v0.1.0",
 	"developer": "EthanRStokes",
-	"description": "Records or runs a Macros macro directly, in-process, synced to level attempts.",
+	"description": "Records or runs a Blockwork macro directly, in-process, synced to level attempts.",
 	"settings": {
 		"enabled": {
 			"name": "Enabled",
@@ -16,16 +16,16 @@
 			"type": "bool",
 			"default": false
 		},
-		"macros-dir": {
-			"name": "Macros Config Dir Override (Proton only)",
-			"description": "Leave blank on native Windows/macOS. Under Proton, set this to the Wine Z:-mapped path to the Linux Macros config dir, e.g. Z:\\home\\yourname\\.config, so this mod reads/writes the same macro files as the desktop app.",
+		"blockwork-dir": {
+			"name": "Blockwork Config Dir Override (Proton only)",
+			"description": "Leave blank on native Windows/macOS. Under Proton, set this to the Wine Z:-mapped path to the Linux Blockwork config dir, e.g. Z:\\home\\yourname\\.config, so this mod reads/writes the same macro files as the desktop app.",
 			"type": "string",
 			"default": "",
 			"filter": "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:\\/._- "
 		},
 		"action": {
 			"name": "On Level Start",
-			"description": "What to tell Macros to do when an attempt starts.",
+			"description": "What to tell Blockwork to do when an attempt starts.",
 			"type": "string",
 			"one-of": ["run_macro", "start_recording"],
 			"default": "run_macro"
@@ -35,6 +35,18 @@
 			"description": "Send a matching stop command when the attempt ends (death, retry, or completion), so it doesn't bleed into the next attempt.",
 			"type": "bool",
 			"default": true
+		},
+		"speed-multiplier": {
+			"name": "Speed Multiplier",
+			"description": "Playback speed for the running macro - every Wait duration is divided by this. Combines with the macro's own per-macro speed multiplier (set in the desktop app). 1x is normal speed. Only affects Run Macro; has no effect while recording. Applied at the start of each attempt, so changing it mid-run doesn't retroactively speed up that run.",
+			"type": "float",
+			"default": 1.0,
+			"min": 0.1,
+			"max": 10.0,
+			"control": {
+				"slider": true,
+				"input": true
+			}
 		},
 		"open-config": {
 			"name": "Open Config Popup",

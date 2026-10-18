@@ -8,19 +8,19 @@
 #include <Geode/ui/Popup.hpp>
 
 #include "MacrosPopup.hpp"
-#include "macros_ffi.h"
+#include "blockwork_ffi.h"
 
 using namespace geode::prelude;
 
 namespace {
 
 // Routes every `tracing::info!`/`warn!`/etc. call from the Rust side (both
-// macros-ffi's own and macros-core's, when linked in) into Geode's logger.
+// blockwork-ffi's own and blockwork-core's, when linked in) into Geode's logger.
 // Without this registered, those calls have no subscriber and are silently
 // dropped — there is no other way to see Rust-side diagnostics (e.g. Wine
 // detection, bridge setup) in Geode's log file.
 void onMacrosLog(const char* msg) {
-    log::info("[macros] {}", msg);
+    log::info("[blockwork] {}", msg);
 }
 
 // The game's initial boot splash (LoadingLayer) doesn't have all of the UI
@@ -166,7 +166,7 @@ bool waitingForAttemptStart = false;
 // positive. A fresh entry can still be finishing texture decompression and
 // sprite-cache population for a moment right as gameplay starts, which
 // briefly slows real-world tick time even though the level clock itself is
-// already moving - a retry has no such contention. Macros' recording clock
+// already moving - a retry has no such contention. Blockwork's recording clock
 // is wall-clock, not level-time, so sending the start trigger mid-hitch
 // bakes that attempt-1-only stutter straight into the first recorded Wait.
 //
@@ -176,9 +176,20 @@ bool waitingForAttemptStart = false;
 // (OS scheduling, monitor refresh jitter, background disk I/O) - reset the
 // streak and pushed the trigger out further, so the delay before it fired
 // varied attempt to attempt instead of staying constant. Unconditionally
-// waiting out a fixed grace period is deterministic: every attempt, fresh or
-// retry, gets exactly the same delay after gameplay visually starts,
-// regardless of whether any individual tick happened to hitch.
+// waiting out a fixed grace period is deterministic in *intent*: every
+// attempt, fresh or retry, is meant to get exactly the same delay after
+// gameplay visually starts.
+//
+// In practice this check only runs once per frame, so the trigger still
+// fires on whichever frame's update() first pushes the running total past
+// kStartGracePeriod - overshooting the exact mark by that frame's own dt,
+// which is normally sub-frame noise but grows in lockstep with frame-time
+// variance (a Proton/translation-layer stutter landing on this exact frame
+// bakes its whole dt into the overshoot). sendAttemptStart() is handed that
+// overshoot and forwards it to blockwork_run_macro so the Rust side can
+// backdate the run's own timeline to the *intended* instant instead of
+// baking this frame-quantization error into it on top of its own dispatch
+// latency.
 double elapsedSinceLevelStart = 0.0;
 constexpr double kStartGracePeriod = 0.2; // seconds
 
@@ -217,7 +228,13 @@ void requestAttemptStart() {
     attemptEndSent = false;
 }
 
-void sendAttemptStart() {
+// `elapsedOvershootMs`: how far past the exact kStartGracePeriod mark
+// GJBaseGameLayer::update() overshot before this got called - see its
+// comment on the elapsedSinceLevelStart check below. Only meaningful for
+// blockwork_run_macro (it backdates that run's first Wait deadline to the
+// *intended* start instant); blockwork_start_recording has no timeline of its
+// own to backdate, so this is simply ignored on that path.
+void sendAttemptStart(double elapsedOvershootMs) {
     // requestAttemptStart() already reset this when the attempt was armed,
     // but anything that fires sendAttemptEnd() during the grace-period
     // window between arming and actually starting (observed in practice:
@@ -236,22 +253,29 @@ void sendAttemptStart() {
     // (e.g. a fast retry landing before the player has tabbed back in).
     currentAttemptMacrosEnabled = enabledSetting && windowFocused;
     if (!currentAttemptMacrosEnabled) {
-        log::debug("macros: skipping attempt start (enabled={}, windowFocused={})", enabledSetting, windowFocused);
+        log::debug("blockwork: skipping attempt start (enabled={}, windowFocused={})", enabledSetting, windowFocused);
         return;
     }
     currentAttemptAction = Mod::get()->getSettingValue<std::string>("action");
-    int result = (currentAttemptAction == "start_recording") ? macros_start_recording() : macros_run_macro(nullptr);
+    // Pushed fresh into blockwork-core's own settings file every attempt, same
+    // as "action" above - blockwork_run_macro() already re-reads it from there
+    // on every call, so this is the one point that needs to keep the two in
+    // sync. Harmless (and ignored) when this attempt is recording instead.
+    blockwork_set_speed_multiplier(Mod::get()->getSettingValue<double>("speed-multiplier"));
+    int result = (currentAttemptAction == "start_recording")
+        ? blockwork_start_recording()
+        : blockwork_run_macro(nullptr, elapsedOvershootMs);
     if (result != 0) {
-        log::warn("macros: {} failed (code {})", currentAttemptAction, result);
+        log::warn("blockwork: {} failed (code {})", currentAttemptAction, result);
     } else {
-        log::debug("macros: {} ok", currentAttemptAction);
+        log::debug("blockwork: {} ok (elapsed_overshoot_ms={})", currentAttemptAction, elapsedOvershootMs);
     }
 }
 
 void sendAttemptEnd() {
     // TEMPORARY: see exactly why this might bail early.
     log::info(
-        "macros: sendAttemptEnd called (attemptEndSent={}, stop-on-end={}, currentAttemptAction='{}')",
+        "blockwork: sendAttemptEnd called (attemptEndSent={}, stop-on-end={}, currentAttemptAction='{}')",
         attemptEndSent, Mod::get()->getSettingValue<bool>("stop-on-end"), currentAttemptAction
     );
     if (attemptEndSent || !Mod::get()->getSettingValue<bool>("stop-on-end") || !currentAttemptMacrosEnabled) {
@@ -261,20 +285,20 @@ void sendAttemptEnd() {
     if (currentAttemptAction == "start_recording") {
         // Positive = instructions captured and saved, 0 = capture hook
         // produced nothing at all, negative = couldn't resolve/save.
-        int result = macros_stop_recording();
+        int result = blockwork_stop_recording();
         if (result < 0) {
-            log::warn("macros: stop_recording failed (code {})", result);
+            log::warn("blockwork: stop_recording failed (code {})", result);
         } else if (result == 0) {
-            log::warn("macros: stop_recording ok, but captured 0 instructions - input capture isn't picking anything up");
+            log::warn("blockwork: stop_recording ok, but captured 0 instructions - input capture isn't picking anything up");
         } else {
-            log::info("macros: stop_recording ok, captured {} instructions", result);
+            log::info("blockwork: stop_recording ok, captured {} instructions", result);
         }
     } else {
-        int result = macros_stop_loop();
+        int result = blockwork_stop_loop();
         if (result != 0) {
-            log::warn("macros: stop_loop failed (code {})", result);
+            log::warn("blockwork: stop_loop failed (code {})", result);
         } else {
-            log::debug("macros: stop_loop ok");
+            log::debug("blockwork: stop_loop ok");
         }
     }
 }
@@ -335,7 +359,7 @@ class $modify(PlayLayer) {
         PlayLayer::pauseGame(unfocused);
         // TEMPORARY: confirm this hook actually fires on Escape at all
         // before trusting anything past this line.
-        log::info("macros: pauseGame hook fired (unfocused={})", unfocused);
+        log::info("blockwork: pauseGame hook fired (unfocused={})", unfocused);
         // Opening the pause menu (Escape, or losing window focus) isn't
         // gameplay - without this, whatever the player does in the pause
         // menu (navigating to this mod's own config popup, in particular)
@@ -364,7 +388,11 @@ class $modify(GJBaseGameLayer) {
         elapsedSinceLevelStart += dt;
         if (elapsedSinceLevelStart >= kStartGracePeriod) {
             waitingForAttemptStart = false;
-            sendAttemptStart();
+            // How far this frame's dt pushed us past the exact target -
+            // see the comment on kStartGracePeriod above for why this
+            // needs to be measured and forwarded rather than just eaten.
+            double overshootMs = (elapsedSinceLevelStart - kStartGracePeriod) * 1000.0;
+            sendAttemptStart(overshootMs);
         }
     }
 };
@@ -388,13 +416,13 @@ class $modify(AppDelegate) {
         // bookkeeping is what makes this a hard safety net rather than
         // just another path to the same attempt-end logic. Both calls are
         // no-ops if nothing of that kind was active.
-        int recordingResult = macros_stop_recording();
+        int recordingResult = blockwork_stop_recording();
         if (recordingResult < 0) {
-            log::warn("macros: stop_recording on focus loss failed (code {})", recordingResult);
+            log::warn("blockwork: stop_recording on focus loss failed (code {})", recordingResult);
         }
-        int loopResult = macros_stop_loop();
+        int loopResult = blockwork_stop_loop();
         if (loopResult != 0) {
-            log::warn("macros: stop_loop on focus loss failed (code {})", loopResult);
+            log::warn("blockwork: stop_loop on focus loss failed (code {})", loopResult);
         }
     }
 
@@ -409,27 +437,27 @@ class $modify(AppDelegate) {
 };
 
 $on_mod(Loaded) {
-    // Must be registered before macros_init (or anything else that might
+    // Must be registered before blockwork_init (or anything else that might
     // log) so no diagnostics from setup itself get silently dropped.
-    macros_set_log_callback(&onMacrosLog);
+    blockwork_set_log_callback(&onMacrosLog);
 
     // Must run on the main thread — macOS's Accessibility prompt
-    // (behind macros_init) requires it, and $on_mod(Loaded) already runs
+    // (behind blockwork_init) requires it, and $on_mod(Loaded) already runs
     // there.
-    auto dir = Mod::get()->getSettingValue<std::string>("macros-dir");
-    // Resolved unconditionally (cheap, harmless if unused) — macros_init
+    auto dir = Mod::get()->getSettingValue<std::string>("blockwork-dir");
+    // Resolved unconditionally (cheap, harmless if unused) — blockwork_init
     // only actually uses this if it detects it's running under Wine on a
     // Linux host (Proton), where WH_KEYBOARD_LL/WH_MOUSE_LL and SendInput
     // don't work, so it launches this as a native Linux helper process
     // instead. Native Windows/macOS ignore it entirely.
     auto bridgePath = CCFileUtils::get()->fullPathForFilename("linux-input.so"_spr, true);
-    int result = macros_init(dir.empty() ? nullptr : dir.c_str(), bridgePath.empty() ? nullptr : bridgePath.c_str());
+    int result = blockwork_init(dir.empty() ? nullptr : dir.c_str(), bridgePath.empty() ? nullptr : bridgePath.c_str());
     if (result != 0) {
-        log::warn("macros: macros_init failed (code {}) - no input backend for this platform", result);
-    } else if (macros_grab_failed()) {
-        log::warn("macros: input capture/emission unavailable (grab failed) - check permissions");
+        log::warn("blockwork: blockwork_init failed (code {}) - no input backend for this platform", result);
+    } else if (blockwork_grab_failed()) {
+        log::warn("blockwork: input capture/emission unavailable (grab failed) - check permissions");
     } else {
-        log::info("macros: initialized, config dir override = '{}'", dir.empty() ? "<none, using OS default>" : dir);
+        log::info("blockwork: initialized, config dir override = '{}'", dir.empty() ? "<none, using OS default>" : dir);
     }
     setupConfigPopupHotkey();
     setupMacrosPopupHotkey();

@@ -3,21 +3,21 @@
 	"gd": {
 		"win": "2.2081"
 	},
-	"id": "dev.ethanstokes.macros",
-	"name": "macros",
+	"id": "com.blockworked.blockwork",
+	"name": "blockwork",
 	"version": "v1.0.0",
 	"developer": "EthanRStokes",
-	"description": "Tells the Macros app (running on the host) to start recording or run the current macro, synced to level attempts.",
+	"description": "Tells the Blockwork app (running on the host) to start recording or run the current macro, synced to level attempts.",
 	"settings": {
 		"port": {
-			"name": "Macros App Port",
-			"description": "TCP port the Macros app's local control interface listens on (must match Macros' own port setting).",
+			"name": "Blockwork App Port",
+			"description": "TCP port the Blockwork app's local control interface listens on (must match Blockwork's own port setting).",
 			"type": "int",
 			"default": 47821
 		},
 		"action": {
 			"name": "On Level Start",
-			"description": "What to tell Macros to do when an attempt starts.",
+			"description": "What to tell Blockwork to do when an attempt starts.",
 			"type": "string",
 			"one-of": ["run_macro", "start_recording"],
 			"default": "run_macro"
