@@ -734,6 +734,12 @@ class $modify(GJBaseGameLayer) {
     }
 
     void handleButton(bool down, int button, bool isPlayer1) {
+        // While a macro drives the player, real clicks and keys must not reach
+        // it: a stray press would shift the run off the recorded inputs.
+        if (frameLockedActive && !inPlaybackInput && button == 1
+            && static_cast<GJBaseGameLayer*>(PlayLayer::get()) == this) {
+            return;
+        }
         if (stepRecordingActive && !inPlaybackInput && button == 1
             && static_cast<GJBaseGameLayer*>(PlayLayer::get()) == this) {
             bool& held = recordHeld[isPlayer1 ? 0 : 1];
