@@ -2,7 +2,10 @@
 #include <Geode/loader/SettingV3.hpp>
 #include <Geode/modify/AppDelegate.hpp>
 #include <Geode/modify/CCKeyboardDispatcher.hpp>
+#include <algorithm>
 #include <cmath>
+#include <map>
+#include <vector>
 #include <fstream>
 #include <Geode/binding/LocalLevelManager.hpp>
 #include <Geode/binding/LevelDownloadDelegate.hpp>
@@ -301,6 +304,30 @@ bool stepRecordingActive = false;
 long long recordStep = 0;
 FILE* stepFile = nullptr;
 
+// Inputs are collected here and only handed to blockwork at the end, so a
+// practice-mode respawn can cut the list back to what it was at a checkpoint:
+// the saved macro is then the stitched-together winning run, not every attempt.
+struct RecordedInput {
+    long long step;
+    bool secondary;
+    bool down;
+};
+std::vector<RecordedInput> recordedInputs;
+
+// What the recording looked like when a checkpoint was placed.
+struct CheckpointSnapshot {
+    size_t inputCount;
+    long long step;
+    bool held[2];
+};
+std::map<CheckpointObject*, CheckpointSnapshot> checkpointSnapshots;
+
+// Dead in practice mode: the recording is kept for the respawn to cut back,
+// but nothing more may be added (or saved) until then.
+bool recordDead = false;
+// Set when resetLevel() respawned at a checkpoint rather than restarting.
+bool respawnedAtCheckpoint = false;
+
 bool stepRecordingWanted() {
     return frameLockedEnabled() && Mod::get()->getSettingValue<bool>("enabled")
         && Mod::get()->getSettingValue<std::string>("action") == "start_recording";
@@ -314,6 +341,9 @@ void startStepRecording(GJBaseGameLayer* layer) {
     stepRecordingActive = true;
     recordStep = 0;
     recordHeld[0] = recordHeld[1] = false;
+    recordedInputs.clear();
+    checkpointSnapshots.clear();
+    recordDead = false;
     blockwork_step_record_begin();
     if (Mod::get()->getSettingValue<bool>("substep-clicks")) {
         layer->m_clickBetweenSteps = true;
@@ -328,10 +358,18 @@ void endStepRecording(bool keep) {
         return;
     }
     stepRecordingActive = false;
-    if (!keep) {
-        blockwork_step_record_begin();
+    blockwork_step_record_begin();
+    if (!keep || recordDead) {
+        recordedInputs.clear();
+        checkpointSnapshots.clear();
+        recordDead = false;
         return;
     }
+    for (auto const& in : recordedInputs) {
+        blockwork_step_record_input(stepTimeMs(in.step), in.secondary, in.down);
+    }
+    recordedInputs.clear();
+    checkpointSnapshots.clear();
     int result = blockwork_step_record_end();
     if (result < 0) {
         log::warn("blockwork: step recording save failed (code {})", result);
@@ -633,14 +671,60 @@ class $modify(PlayLayer) {
             log::info("[autotest] died at {}% on step {} (object id {} anticheat={} at {},{}; player at {},{})", getCurrentPercent(), stepRecordingActive ? recordStep : frameLockedStep, object ? object->m_objectID : -1, object == m_anticheatSpike, object ? object->getPositionX() : 0.f, object ? object->getPositionY() : 0.f, player->getPositionX(), player->getPositionY());
         }
         stopFrameLocked();
-        endStepRecording(false);
+        if (stepRecordingActive && m_isPracticeMode && !checkpointSnapshots.empty()) {
+            // The respawn will cut the recording back to its checkpoint.
+            recordDead = true;
+        } else {
+            endStepRecording(false);
+        }
         // Death: end the attempt right here, rather than waiting for the
         // resetLevel() that follows once the death animation finishes.
         sendAttemptEnd();
     }
 
+    void storeCheckpoint(CheckpointObject* checkpoint) {
+        PlayLayer::storeCheckpoint(checkpoint);
+        if (stepRecordingActive && !recordDead && checkpoint) {
+            checkpointSnapshots[checkpoint] = {recordedInputs.size(), recordStep, {recordHeld[0], recordHeld[1]}};
+        }
+    }
+
+    void removeCheckpoint(bool first) {
+        PlayLayer::removeCheckpoint(first);
+        std::erase_if(checkpointSnapshots, [this](auto const& kv) {
+            return !m_checkpointArray || !m_checkpointArray->containsObject(kv.first);
+        });
+    }
+
+    void loadFromCheckpoint(CheckpointObject* checkpoint) {
+        PlayLayer::loadFromCheckpoint(checkpoint);
+        if (!stepRecordingActive) {
+            return;
+        }
+        auto it = checkpointSnapshots.find(checkpoint);
+        if (it == checkpointSnapshots.end()) {
+            return;
+        }
+        // Stitch: drop everything recorded after the checkpoint and carry on
+        // from its step, so only the attempt that gets through is kept.
+        auto const& snap = it->second;
+        recordedInputs.resize(std::min(recordedInputs.size(), snap.inputCount));
+        recordStep = snap.step;
+        recordHeld[0] = snap.held[0];
+        recordHeld[1] = snap.held[1];
+        recordDead = false;
+        respawnedAtCheckpoint = true;
+        log::info("blockwork: practice respawn, recording cut back to step {} ({} inputs)", snap.step, recordedInputs.size());
+    }
+
     void resetLevel() {
+        respawnedAtCheckpoint = false;
         PlayLayer::resetLevel();
+        if (respawnedAtCheckpoint && stepRecordingActive) {
+            // Practice respawn: the recording continues from the checkpoint.
+            respawnedAtCheckpoint = false;
+            return;
+        }
         // Manual retry ends up here with no prior destroyPlayer() call, so
         // this is what ends that attempt. After a death, sendAttemptEnd()
         // was already sent above and is a no-op here. Either way, arm the
@@ -688,7 +772,11 @@ class $modify(PlayLayer) {
         // after already dying).
         sendAttemptEnd();
         stopFrameLocked();
-        endStepRecording(true);
+        // Pausing in practice mode isn't the end of the run - the stitched
+        // recording carries on after resuming.
+        if (!(stepRecordingActive && m_isPracticeMode)) {
+            endStepRecording(true);
+        }
     }
 };
 
@@ -740,12 +828,12 @@ class $modify(GJBaseGameLayer) {
             && static_cast<GJBaseGameLayer*>(PlayLayer::get()) == this) {
             return;
         }
-        if (stepRecordingActive && !inPlaybackInput && button == 1
+        if (stepRecordingActive && !recordDead && !inPlaybackInput && button == 1
             && static_cast<GJBaseGameLayer*>(PlayLayer::get()) == this) {
             bool& held = recordHeld[isPlayer1 ? 0 : 1];
             if (held != down) {
                 held = down;
-                blockwork_step_record_input(stepTimeMs(recordStep), !isPlayer1, down);
+                recordedInputs.push_back({recordStep, !isPlayer1, down});
             }
             if (Mod::get()->getSettingValue<bool>("trace-steps")) {
                 log::info("[trace-record] step {} p1={} down={}", recordStep, isPlayer1, down);
