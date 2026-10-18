@@ -1,6 +1,8 @@
 #pragma once
 
 #include <Geode/ui/Popup.hpp>
+#include <Geode/utils/async.hpp>
+#include <Geode/utils/file.hpp>
 
 #include <string>
 #include <vector>
@@ -23,6 +25,7 @@ protected:
     int m_selectedIndex = -1;
 
     cocos2d::CCLabelBMFont* m_nameLabel = nullptr;
+    geode::async::TaskHolder<geode::utils::file::PickResult> m_pickHolder;
 
     bool init();
 
@@ -41,6 +44,11 @@ protected:
     void onRenameMacro(cocos2d::CCObject* sender);
     void onDeleteMacro(cocos2d::CCObject* sender);
     void onClearInstructions(cocos2d::CCObject* sender);
+    void onImportReplay(cocos2d::CCObject* sender);
+    void onOpenImportsFolder(cocos2d::CCObject* sender);
+    // Imports a picked/dropped GDR replay and reports the outcome.
+    void importReplayFile(std::string const& path);
+    void importPending();
 
 public:
     static MacrosPopup* create();

@@ -36,6 +36,38 @@
 			"type": "bool",
 			"default": true
 		},
+		"frame-locked": {
+			"name": "Frame-Locked Playback",
+			"description": "Run macros on the game's own physics steps instead of wall-clock timing, so every input lands on the exact step it was recorded for. Only affects Run Macro.",
+			"type": "bool",
+			"default": true
+		},
+		"substep-clicks": {
+			"name": "Click Between Steps",
+			"description": "Developer option: turns on the game's click-between-steps handling during frame-locked playback.",
+			"type": "bool",
+			"default": false
+		},
+		"queue-inputs": {
+			"name": "Queue Inputs Like Real Clicks",
+			"description": "Developer option: frame-locked inputs go through the game's own input queue instead of being applied directly.",
+			"type": "bool",
+			"default": false
+		},
+		"trace-steps": {
+			"name": "Trace Player Positions",
+			"description": "Developer option: logs the player position on every frame-locked step.",
+			"type": "bool",
+			"default": false
+		},
+		"frame-offset": {
+			"name": "Frame-Locked Step Offset",
+			"description": "Shifts which physics step each macro input lands on (positive = later). The default -1 matches GDR replays, whose frame numbers start at 1. Only for Frame-Locked Playback.",
+			"type": "int",
+			"default": -1,
+			"min": -10,
+			"max": 10
+		},
 		"speed-multiplier": {
 			"name": "Speed Multiplier",
 			"description": "Playback speed for the running macro - every Wait duration is divided by this. Combines with the macro's own per-macro speed multiplier (set in the desktop app). 1x is normal speed. Only affects Run Macro; has no effect while recording. Applied at the start of each attempt, so changing it mid-run doesn't retroactively speed up that run.",

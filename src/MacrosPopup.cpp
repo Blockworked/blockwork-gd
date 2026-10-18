@@ -7,9 +7,14 @@
 #include <Geode/ui/TextInput.hpp>
 #include <matjson.hpp>
 
+#include <algorithm>
 #include <functional>
+#include <set>
 #include <utility>
 
+#include <Geode/binding/PlayLayer.hpp>
+
+#include "LevelMacros.hpp"
 #include "blockwork_ffi.h"
 
 using namespace geode::prelude;
@@ -89,7 +94,7 @@ public:
 }
 
 bool MacrosPopup::init() {
-    if (!Popup::init(280.f, 260.f, "GJ_square01.png")) {
+    if (!Popup::init(280.f, 300.f, "GJ_square01.png")) {
         return false;
     }
 
@@ -141,9 +146,111 @@ bool MacrosPopup::init() {
     );
     m_buttonMenu->addChildAtPosition(deleteBtn, Anchor::Center, ccp(0, -86));
 
+    auto importSpr = ButtonSprite::create("Import Replay", "goldFont.fnt", "GJ_button_02.png", .8f);
+    importSpr->setScale(.65f);
+    auto importBtn = CCMenuItemSpriteExtra::create(
+        importSpr, this, menu_selector(MacrosPopup::onImportReplay)
+    );
+    m_buttonMenu->addChildAtPosition(importBtn, Anchor::Center, ccp(-62, -126));
+
+    auto folderSpr = ButtonSprite::create("Imports Folder", "goldFont.fnt", "GJ_button_02.png", .8f);
+    folderSpr->setScale(.65f);
+    auto folderBtn = CCMenuItemSpriteExtra::create(
+        folderSpr, this, menu_selector(MacrosPopup::onOpenImportsFolder)
+    );
+    m_buttonMenu->addChildAtPosition(folderBtn, Anchor::Center, ccp(62, -126));
+
+    // Replays dropped into the imports folder are picked up on open.
+    importPending();
     reloadMacros();
 
     return true;
+}
+
+void MacrosPopup::importReplayFile(std::string const& path) {
+    // blockwork_import_gdr doesn't report the new macro's id, so find it by
+    // diffing the library before and after.
+    std::set<std::string> before;
+    for (auto& m : m_macros) {
+        before.insert(m.id);
+    }
+    int result = blockwork_import_gdr(path.c_str());
+    if (result == 0) {
+        reloadMacros();
+        // Imported while inside a level: that replay belongs to this level.
+        auto* pl = PlayLayer::get();
+        if (pl) {
+            for (auto& m : m_macros) {
+                if (!before.count(m.id)) {
+                    levelmacros::link(levelmacros::keyFor(pl->m_level), m.id);
+                    break;
+                }
+            }
+        }
+        Notification::create(
+            pl ? "Replay imported and linked to this level" : "Replay imported",
+            NotificationIcon::Success
+        )->show();
+        return;
+    }
+    const char* why = result == -2 ? "Couldn't read that file"
+        : result == -3 ? "Not a valid GDR replay"
+        : "Couldn't import that replay";
+    Notification::create(why, NotificationIcon::Error)->show();
+}
+
+void MacrosPopup::importPending() {
+    int count = blockwork_import_pending_gdrs();
+    if (count > 0) {
+        Notification::create(fmt::format("Imported {} replay(s)", count), NotificationIcon::Success)->show();
+    }
+}
+
+void MacrosPopup::onImportReplay(CCObject*) {
+    file::FilePickOptions options;
+    options.filters.push_back({"GD replays", {"*.gdr", "*.gdr2", "*.json"}});
+    // Under Proton this is Wine's own file dialog; paths come back as Z:\...
+    // which blockwork-ffi (also inside Wine) can read directly.
+    m_pickHolder.spawn("Import replay", file::pick(file::PickMode::OpenFile, options), [this](file::PickResult res) {
+        if (!res) {
+            Notification::create("Couldn't open the file picker - drop the replay into the Imports Folder instead", NotificationIcon::Warning)->show();
+            return;
+        }
+        if (auto path = res.unwrap()) {
+            importReplayFile(path->string());
+        }
+    });
+}
+
+void MacrosPopup::onOpenImportsFolder(CCObject*) {
+    char* dir = blockwork_imports_dir();
+    if (!dir) {
+        Notification::create("Imports folder unavailable", NotificationIcon::Error)->show();
+        return;
+    }
+    std::string path = dir;
+    blockwork_free_string(dir);
+#ifdef GEODE_IS_WINDOWS
+    // Under Wine the folder lives on the Linux side (Z:\home\...): hand it to
+    // the host's file manager with `start /unix`, since Explorer can't show it.
+    if (GetProcAddress(GetModuleHandleA("ntdll.dll"), "wine_get_version")) {
+        std::string unixPath = path;
+        if (unixPath.size() > 1 && unixPath[1] == ':') {
+            unixPath = unixPath.substr(2);
+        }
+        std::replace(unixPath.begin(), unixPath.end(), '\\', '/');
+        std::string cmd = "cmd.exe /c start /unix \"" + unixPath + "\"";
+        STARTUPINFOA si{};
+        si.cb = sizeof(si);
+        PROCESS_INFORMATION pi{};
+        if (CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+            return;
+        }
+    }
+#endif
+    file::openFolder(std::filesystem::path(path));
 }
 
 void MacrosPopup::reloadMacros() {
@@ -191,6 +298,10 @@ void MacrosPopup::selectCurrent() {
         return;
     }
     blockwork_select_macro(m_macros[m_selectedIndex].id.c_str());
+    // Picking a macro while in a level is how the player (re)assigns it.
+    if (auto* pl = PlayLayer::get()) {
+        levelmacros::link(levelmacros::keyFor(pl->m_level), m_macros[m_selectedIndex].id);
+    }
     updateSelectedLabel();
 }
 
@@ -221,6 +332,10 @@ void MacrosPopup::onCreateMacro(CCObject*) {
         return;
     }
     reloadMacros();
+    // create_macro selects the new macro; tie it to the current level, if any.
+    if (auto* pl = PlayLayer::get()) {
+        levelmacros::linkSelectedTo(pl->m_level);
+    }
     Notification::create("Macro created", NotificationIcon::Success)->show();
 }
 
