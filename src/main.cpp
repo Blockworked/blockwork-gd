@@ -337,7 +337,13 @@ double stepTimeMs(long long step) {
     return static_cast<double>(step - Mod::get()->getSettingValue<int64_t>("frame-offset")) * 1000.0 / kStepsPerSecond;
 }
 
+void stopFrameLocked();
+
 void startStepRecording(GJBaseGameLayer* layer) {
+    // Nothing may be driving input while a human records: a wall-clock macro
+    // loop still running would inject its own clicks into the recording.
+    stopFrameLocked();
+    blockwork_stop_loop();
     stepRecordingActive = true;
     recordStep = 0;
     recordHeld[0] = recordHeld[1] = false;
@@ -710,11 +716,19 @@ class $modify(PlayLayer) {
         auto const& snap = it->second;
         recordedInputs.resize(std::min(recordedInputs.size(), snap.inputCount));
         recordStep = snap.step;
-        recordHeld[0] = snap.held[0];
-        recordHeld[1] = snap.held[1];
+        // The respawn releases every button, whatever was held when the
+        // checkpoint was placed. Record that release at the checkpoint's step,
+        // otherwise the macro keeps holding and the next real press (which the
+        // recorder sees as "already down") is lost.
+        for (int i = 0; i < 2; i++) {
+            if (snap.held[i]) {
+                recordedInputs.push_back({snap.step, i == 1, false});
+            }
+            recordHeld[i] = false;
+        }
         recordDead = false;
         respawnedAtCheckpoint = true;
-        log::info("blockwork: practice respawn, recording cut back to step {} ({} inputs)", snap.step, recordedInputs.size());
+        log::info("blockwork: practice respawn, recording cut back to step {} ({} inputs, held {}/{})", snap.step, recordedInputs.size(), snap.held[0], snap.held[1]);
     }
 
     void resetLevel() {

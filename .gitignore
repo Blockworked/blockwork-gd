@@ -87,3 +87,7 @@ winsdk_vfs_overlay.yaml
 
 # Packaged Geode mod (build output)
 *.geode
+
+# Python bytecode caches
+__pycache__/
+*.py[cod]
