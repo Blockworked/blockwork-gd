@@ -6,7 +6,7 @@
 	},
 	"id": "com.blockworked.blockwork",
 	"name": "blockwork",
-	"version": "v0.1.0",
+	"version": "v0.1.1",
 	"developer": "EthanRStokes",
 	"description": "Records or runs a Blockwork macro directly, in-process, synced to level attempts.",
 	"settings": {
