@@ -22,8 +22,9 @@
         "CMAKE_OSX_ARCHITECTURES": "arm64",
         "CMAKE_EXPORT_COMPILE_COMMANDS": true,
         "SKIP_BUILDING_CODEGEN": false,
-        "BLOCKWORK_FFI_LIB": "${sourceDir}/../Blockwork/target/aarch64-apple-darwin/release/libblockwork_ffi.a",
-        "BLOCKWORK_FFI_INCLUDE_DIR": "${sourceDir}/../Blockwork/blockwork-ffi/include"
+        "BLOCKWORK_FFI_LIB": "${sourceDir}/../Blockwork/target/universal-macos/libblockwork_ffi.a",
+        "BLOCKWORK_FFI_INCLUDE_DIR": "${sourceDir}/../Blockwork/blockwork-ffi/include",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "11.0"
       }
     }
   ],

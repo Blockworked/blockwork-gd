@@ -38,7 +38,7 @@ The output directory must not already exist. `--queue`, `--cbs`, `--offset` and 
 
 Computer-use access to Geometry Dash was rejected by that tool’s approval review. No computer-use controls were used for the game; execution and evidence came from the mod’s own test harness and the official Steam launcher. Visual/keybind interaction coverage is therefore not claimed.
 
-The private-repository CI jobs were rejected before startup by GitHub billing/spending limits. This is an external execution block, not a compiler result. The local universal mod compiles and links both architectures with a macOS 11.0 floor and no mixed-target warnings. Its final 3/3 fresh-import 10x acceptance batch passed on Apple Silicon; Windows compilation and Intel game runtime are not claimed.
+The initial private CI jobs could not start because of GitHub billing/spending limits. After the user restored runner availability, clean CI exposed and repaired the Codegen mismatch described below. Windows and universal Mac builds then passed: https://github.com/Blockworked/blockwork-gd/actions/runs/40236673481. The Mac binary contains both arm64 and x86_64 with a macOS 11.0 minimum. Intel game runtime is not claimed.
 
 A separate universal smoke batch was interrupted on focus loss during its second attempt. That batch is recorded separately and is not counted among completed batches. The harness now reports paused/unfocused interruptions explicitly. Final evidence is also preserved in `build/macos-verification/summary.json`.
 
@@ -56,3 +56,13 @@ python3 scripts/autotest-macos.py --recording-probe --speed 10 --cbs --trace --o
 These short recording probes are not counted as level completions. The full replay acceptance remains a separate gate.
 
 Clean CI exposed a separate generator mismatch: Geode's default path downloads a mutable prebuilt Codegen binary, which emitted newer `Geode/mapping/*` includes for the older pinned bindings. Both platforms failed before compiling the mod. CI now builds Codegen from the same pinned bindings source (`SKIP_BUILDING_CODEGEN=OFF`), matching the working local preset; no SDK sources are modified.
+
+## Installed CI artifact acceptance
+
+The successful Mac CI artifact was downloaded and installed for the final checks (SHA-256 `3b240ef6c01ccd1735a1b5b2890a37b6655919f66ee1984f9df4e505ca4f8d00`). It completed one fresh normal-speed queued+CBS run and 3/3 fresh queued+CBS+foreign-input QOL 10x runs. All three 10x schedules matched the normal run's 724 emitted input events exactly, including directions and physics steps. Position traces matched through step 26,840; the final input was step 26,741. Differences began in the finish sequence. Separate recording probes passed at both speeds, including persisted timestamps and duplicate suppression. Startup logs reported no input-grab, initialization, recording-save or host-clock timeout errors.
+
+The CI artifact remains installed. Its latest successful fresh replay is selected and linked to the local Bloodbath Infinity 2 level. Nine configuration/game-save files were verified byte-identical after testing, before the intentional final selection/link; the two original user macros remain byte-identical. Temporary test macros were archived outside the configuration directory.
+
+Evidence: `build/macos-verification/ci-40236673481.json`, `ci-normal-vs-10x-traces.json`, and the four `blockwork-gd-macos-ci-*.json` manifests. Finite successful batches establish their observed 100% completion rate under the recorded configuration; they do not prove every future hardware or unrelated-mod configuration.
+
+The local development preset now also targets macOS 11.0 and links the isolated universal FFI archive, matching the verified package's deployment floor. The README uses the same FFI build script, preventing the desktop Qt app's macOS 13 cache from entering this build.

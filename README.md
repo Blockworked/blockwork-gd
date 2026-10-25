@@ -18,13 +18,16 @@ The Geode CLI is installed in `~/.local/bin`.
 
 ```sh
 source scripts/dev-env.sh
-MACOSX_DEPLOYMENT_TARGET=13.0 cargo build -p blockwork-ffi --release --target aarch64-apple-darwin --manifest-path ../Blockwork/Cargo.toml
+MACOSX_DEPLOYMENT_TARGET=11.0 ../Blockwork/blockwork-ffi/build-macos.sh
 cmake --preset mac-dev
 cmake --build --preset mac-dev
 ```
 
 The `mac-dev` preset links the Rust engine from the sibling `../Blockwork`
-checkout, including its macOS backend fixes. Rebuild that library when the engine changes.
+checkout, including its macOS backend fixes. The FFI build script isolates the
+macOS 11.0 Cargo cache and produces `../Blockwork/target/universal-macos/libblockwork_ffi.a`;
+the development preset links that archive with the same 11.0 deployment floor.
+Rebuild the archive when the engine changes.
 The older `.tools/blockwork-engine` checkout is retained but is no longer the preset’s source. The preset builds
 for Apple Silicon with debug symbols and generates
 `build/mac-dev/compile_commands.json` for editor code completion. Open this
@@ -34,8 +37,11 @@ Restart Geometry Dash to load a rebuilt mod.
 
 ```sh
 geode profile list
-geode run
+"$HOME/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx" -applaunch 322170
 ```
+
+Launch through Steam on this installation: direct Geode CLI/executable launches
+exited before the menu during verification.
 
 The official `geode.devtools` mod is also installed in the local game; restart
 the game to load it. Its tools can be opened with **F10** (or **Fn+F10**, depending
