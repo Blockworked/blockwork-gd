@@ -1,0 +1,49 @@
+name: Build embedded Blockwork engine
+description: Build the pinned Rust FFI library and expose its library/header paths.
+outputs:
+  ffi-lib:
+    description: Static library for the host platform (universal on macOS).
+    value: ${{ steps.build.outputs.ffi-lib }}
+  ffi-include:
+    description: Generated C header directory.
+    value: ${{ steps.build.outputs.ffi-include }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        repository: Blockworked/Blockwork
+        ref: e285eac69af1759811b39aeedd861653bd06a30b
+        path: .blockwork-engine
+        persist-credentials: false
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || 'x86_64-pc-windows-msvc' }}
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: .blockwork-engine -> target
+        key: geode-ffi-${{ runner.os }}
+    - name: Build static FFI library
+      id: build
+      shell: bash
+      run: |
+        engine_root="$GITHUB_WORKSPACE/.blockwork-engine"
+        if [ "$RUNNER_OS" = macOS ]; then
+          export MACOSX_DEPLOYMENT_TARGET=11.0
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --manifest-path "$engine_root/Cargo.toml" -p blockwork-ffi --release --locked --target "$target"
+          done
+          mkdir -p "$engine_root/target/universal-macos"
+          ffi_lib="$engine_root/target/universal-macos/libblockwork_ffi.a"
+          lipo -create -output "$ffi_lib" \
+            "$engine_root/target/aarch64-apple-darwin/release/libblockwork_ffi.a" \
+            "$engine_root/target/x86_64-apple-darwin/release/libblockwork_ffi.a"
+          lipo -verify_arch arm64 x86_64 "$ffi_lib"
+          ffi_include="$engine_root/blockwork-ffi/include"
+        else
+          cargo build --manifest-path "$engine_root/Cargo.toml" -p blockwork-ffi --release --locked --target x86_64-pc-windows-msvc
+          ffi_lib="$(cygpath -m "$engine_root/target/x86_64-pc-windows-msvc/release/blockwork_ffi.lib")"
+          ffi_include="$(cygpath -m "$engine_root/blockwork-ffi/include")"
+        fi
+        echo "ffi-lib=$ffi_lib" >> "$GITHUB_OUTPUT"
+        echo "ffi-include=$ffi_include" >> "$GITHUB_OUTPUT"

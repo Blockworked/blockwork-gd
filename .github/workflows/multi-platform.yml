@@ -74,7 +74,7 @@ jobs:
 
       - name: Build embedded engine
         id: engine
-        uses: ./.github/actions/build-engine
+        uses: ./.github/actions/embedded-engine
 
       - name: Build the mod
         uses: geode-sdk/build-geode-mod@a0f7676e6fcd1a584f6d0c1c800239008412defc
