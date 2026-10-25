@@ -54,3 +54,5 @@ python3 scripts/autotest-macos.py --recording-probe --speed 10 --cbs --trace --o
 ```
 
 These short recording probes are not counted as level completions. The full replay acceptance remains a separate gate.
+
+Clean CI exposed a separate generator mismatch: Geode's default path downloads a mutable prebuilt Codegen binary, which emitted newer `Geode/mapping/*` includes for the older pinned bindings. Both platforms failed before compiling the mod. CI now builds Codegen from the same pinned bindings source (`SKIP_BUILDING_CODEGEN=OFF`), matching the working local preset; no SDK sources are modified.

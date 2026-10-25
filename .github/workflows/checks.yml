@@ -32,5 +32,6 @@ jobs:
           target: ${{ matrix.target }}
           combine: true
           configure-args: >-
+            -DSKIP_BUILDING_CODEGEN=OFF
             -DBLOCKWORK_FFI_LIB="${{ steps.engine.outputs.ffi-lib }}"
             -DBLOCKWORK_FFI_INCLUDE_DIR="${{ steps.engine.outputs.ffi-include }}"

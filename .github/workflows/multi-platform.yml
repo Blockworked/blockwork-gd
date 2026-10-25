@@ -84,6 +84,7 @@ jobs:
           bindings-ref: 1605f500d053f8de122bf5c7dc6d17c24866e02e
           target: ${{ matrix.config.target }}
           configure-args: >-
+            -DSKIP_BUILDING_CODEGEN=OFF
             -DBLOCKWORK_FFI_LIB="${{ steps.engine.outputs.ffi-lib }}"
             -DBLOCKWORK_FFI_INCLUDE_DIR="${{ steps.engine.outputs.ffi-include }}"
 
