@@ -451,6 +451,8 @@ std::string autotestRunId;
 std::string autotestMacroId;
 bool autotestFreshImport = false;
 bool autotestResultWritten = false;
+bool autotestRecordingProbe = false;
+std::vector<RecordedInput> autotestRecordedInputs;
 auto autotestStart = std::chrono::steady_clock::now();
 
 void writeAutotestResult(std::string const& outcome, PlayLayer* layer = nullptr) {
@@ -460,6 +462,18 @@ void writeAutotestResult(std::string const& outcome, PlayLayer* layer = nullptr)
     result["run_id"] = autotestRunId;
     result["outcome"] = outcome;
     result["fresh_import"] = autotestFreshImport;
+    result["recording_probe"] = autotestRecordingProbe;
+    if (autotestRecordingProbe) {
+        result["record_step"] = recordStep;
+        result["recorded_inputs"] = matjson::Value::array();
+        for (auto const& input : autotestRecordedInputs) {
+            matjson::Value row;
+            row["step"] = input.step;
+            row["secondary"] = input.secondary;
+            row["down"] = input.down;
+            result["recorded_inputs"].push(row);
+        }
+    }
     result["macro_id"] = autotestMacroId;
     result["selected_macro_id"] = levelmacros::selectedMacroId();
     result["step"] = frameLockedStep;
@@ -525,6 +539,7 @@ void maybeStartAutotest() {
     auto json = parsed.unwrap();
     autotestRunId = json["run_id"].asString().unwrapOr("");
     autotestStrayQueueProbe = json["stray_queue_probe"].asBool().unwrapOr(false);
+    autotestRecordingProbe = json["recording_probe"].asBool().unwrapOr(false);
     if (auto ldm = json["ldm"].asBool()) {
         // Low detail mode is game variable 0042.
         GameManager::get()->setGameVariable("0042", ldm.unwrap());
@@ -877,6 +892,21 @@ void beforePhysicsInput(GJBaseGameLayer* layer) {
         frameLockedStep++;
     }
     bool isPlay = static_cast<GJBaseGameLayer*>(PlayLayer::get()) == layer;
+    if (autotestLevelOpen && autotestRecordingProbe && stepRecordingActive && isPlay) {
+        // Delivers test-only game input through the same hooked entry used by
+        // real input. Duplicates must not become extra recorded transitions.
+        if (recordStep == 1 || recordStep == 2 || recordStep == 3 || recordStep == 4) {
+            bool player1 = recordStep < 3;
+            bool down = recordStep == 1 || recordStep == 3;
+            layer->handleButton(down, 1, player1);
+            layer->handleButton(down, 1, player1);
+        }
+        if (recordStep == 8) {
+            autotestRecordedInputs = recordedInputs;
+            endStepRecording(true);
+            writeAutotestResult("recording-probe-complete", PlayLayer::get());
+        }
+    }
     if (stepRecordingActive && isPlay && recordStep < 9000 && Mod::get()->getSettingValue<bool>("trace-steps")) {
         log::info("[trace] {} {} {}", recordStep, layer->m_player1->getPositionX(), layer->m_player1->getPositionY());
     }

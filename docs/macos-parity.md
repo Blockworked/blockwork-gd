@@ -41,3 +41,16 @@ Computer-use access to Geometry Dash was rejected by that tool’s approval revi
 The private-repository CI jobs were rejected before startup by GitHub billing/spending limits. This is an external execution block, not a compiler result. The local universal mod compiles and links both architectures with a macOS 11.0 floor and no mixed-target warnings. Its final 3/3 fresh-import 10x acceptance batch passed on Apple Silicon; Windows compilation and Intel game runtime are not claimed.
 
 A separate universal smoke batch was interrupted on focus loss during its second attempt. That batch is recorded separately and is not counted among completed batches. The harness now reports paused/unfocused interruptions explicitly. Final evidence is also preserved in `build/macos-verification/summary.json`.
+
+## Recording hook verification
+
+The opt-in `--recording-probe` uses the same local level and a fresh imported macro, then delivers both players' button transitions directly through the game's hooked input entry at steps 1, 2, 3 and 4. Each transition is sent twice. At step 8 it saves the recording and reports `recording-probe-complete`, distinct from full-level completion. The Python runner checks both the observed transitions and the actual persisted macro's reconstructed timestamps, including the configured frame offset. Normal-speed and QOL 10x probes passed with exactly four saved transitions; duplicates were suppressed. An earlier, longer probe collided with an introductory hazard at step 63 and is retained separately as a failed fixture attempt, not a full-level acceptance result.
+
+The rebuilt universal package then passed 3/3 fresh-import queued+CBS+foreign-input 10x completions, followed by another normal-speed and 10x trace pair. Both completed the level. All 724 emitted input events matched exactly in name, direction and step. Position traces matched through step 26,841, after the final input at 26,741; later differences belong to the finish sequence. Evidence: `build/macos-verification/final-normal-vs-10x-trace.json` and the corresponding final manifests.
+
+```sh
+python3 scripts/autotest-macos.py --recording-probe --speed 1 --trace --output /tmp/blockwork-recording-normal-new
+python3 scripts/autotest-macos.py --recording-probe --speed 10 --cbs --trace --output /tmp/blockwork-recording-10x-new
+```
+
+These short recording probes are not counted as level completions. The full replay acceptance remains a separate gate.

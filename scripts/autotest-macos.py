@@ -60,6 +60,7 @@ def main():
     parser.add_argument('--queue', action='store_true')
     parser.add_argument('--cbs', action='store_true')
     parser.add_argument('--trace', action='store_true')
+    parser.add_argument('--recording-probe', action='store_true', help='verify step recording separately from full-level playback')
     parser.add_argument('--stray-queue', action='store_true', help='inject and verify rejection of a foreign queued press')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
@@ -69,6 +70,8 @@ def main():
         parser.error('Provide an existing GDR, speed in (0,10], and at least one run.')
     if args.stray_queue and not args.queue:
         parser.error('--stray-queue requires --queue.')
+    if args.recording_probe and args.stray_queue:
+        parser.error('--stray-queue is a playback test; use it separately from --recording-probe.')
     executable = args.game / 'Contents/MacOS/Geometry Dash'
     if game_pids(executable):
         parser.error('Geometry Dash is already running; close it before starting this isolated test.')
@@ -98,7 +101,7 @@ def main():
         shutil.copy2(base.parents[1] / name, backup_dir / name)
     manifest = {'gdr': str(args.gdr.resolve()), 'gdr_sha256': hashlib.sha256(args.gdr.read_bytes()).hexdigest(),
                 'level': args.level, 'qol_speed': args.speed, 'frame_offset': args.offset,
-                'queue': args.queue, 'cbs': args.cbs, 'stray_queue_probe': args.stray_queue, 'runs': [],
+                'queue': args.queue, 'cbs': args.cbs, 'stray_queue_probe': args.stray_queue, 'recording_probe': args.recording_probe, 'runs': [],
                 'macos': platform.mac_ver()[0], 'architecture': platform.machine(),
                 'mod_package_sha256': hashlib.sha256((args.game / 'Contents/geode/mods' / (MOD + '.geode')).read_bytes()).hexdigest()}
     save(args.output / 'manifest.json', manifest)
@@ -116,7 +119,7 @@ def main():
                     'speedhack-top_value': f'{args.speed:g}', 'speedhack/music_enabled': True})
         save(files[1], qol)
         settings = load(files[2])
-        settings.update({'enabled': True, 'action': 'run_macro', 'stop-on-end': True,
+        settings.update({'enabled': True, 'action': 'start_recording' if args.recording_probe else 'run_macro', 'stop-on-end': True,
                          'frame-locked': True, 'frame-offset': args.offset, 'speed-multiplier': 1,
                          'queue-inputs': args.queue, 'substep-clicks': args.cbs,
                          'trace-steps': args.trace, 'blockwork-dir': ''})
@@ -124,7 +127,7 @@ def main():
         seen_macros = set(path.stem for path in (bw / 'macros').glob('*.json'))
         for index in range(args.runs):
             run_id = uuid.uuid4().hex
-            request = {'run_id': run_id, 'local_name': args.level, 'import_gdr': str(args.gdr.resolve()), 'stray_queue_probe': args.stray_queue}
+            request = {'run_id': run_id, 'local_name': args.level, 'import_gdr': str(args.gdr.resolve()), 'stray_queue_probe': args.stray_queue, 'recording_probe': args.recording_probe}
             save(files[5], request)
             files[6].unlink(missing_ok=True)
             before_logs = set((args.game / 'Contents/geode/logs').glob('*.log'))
@@ -163,6 +166,26 @@ def main():
                                 and result.get('selected_macro_id') == macro_id
                                 and result.get('level') == args.level and result.get('player_dead') is False
                                 and (not args.stray_queue or (result.get('stray_queue_injected') and result.get('rejected_foreign_queue_inputs', 0) >= 1)))
+            if args.recording_probe:
+                expected = [{'step': step, 'secondary': secondary, 'down': down}
+                            for step, secondary, down in [(1, False, True), (2, False, False), (3, True, True), (4, True, False)]]
+                saved_events = []
+                elapsed_ms = 0
+                if result['verified_fresh_macro']:
+                    macro = load(args.output / f'run-{index + 1}-macro.json')
+                    for instruction in macro['strands'][0]['instructions']:
+                        kind = instruction['kind']
+                        if isinstance(kind, dict) and 'Wait' in kind:
+                            elapsed_ms += kind['Wait']['value']
+                        elif isinstance(kind, dict) and 'Token' in kind and 'Button' in kind['Token']:
+                            button, direction = kind['Token']['Button']
+                            saved_events.append({'step': round(elapsed_ms * 240 / 1000 + args.offset),
+                                                 'secondary': button == 'Right', 'down': direction == 'Press'})
+                result['saved_recorded_inputs'] = saved_events
+                result['passed'] = (result.get('outcome') == 'recording-probe-complete'
+                                    and result['verified_fresh_macro'] and result.get('selected_macro_id') == macro_id
+                                    and result.get('level') == args.level and result.get('record_step') == 8
+                                    and result.get('recorded_inputs') == expected and saved_events == expected)
             manifest['runs'].append(result)
             save(args.output / 'manifest.json', manifest)
             print(json.dumps(result), flush=True)
