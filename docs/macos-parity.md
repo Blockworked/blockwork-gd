@@ -1,6 +1,6 @@
 # macOS integration verification
 
-In progress. The live acceptance fixture is the local **Bloodbath Infinity 2** level and fresh imports of `~/Downloads/ChesszDC-Bloodbath-Infinity-zBot.gdr`. The existing user replay is not used as the acceptance macro.
+The live acceptance fixture is the local **Bloodbath Infinity 2** level and fresh imports of `~/Downloads/ChesszDC-Bloodbath-Infinity-zBot.gdr`. The existing user replay is not used as the acceptance macro.
 
 ## Platform fix
 
@@ -10,7 +10,7 @@ macOS now advances host-clock playback and recording at the called `processQueue
 
 The native test runner launches through Steam, imports the GDR anew for every attempt, links the exact new macro to the requested local level, and records a result carrying a unique run identifier, macro identifier, selected identifier, level, step, completion/death state and elapsed time. The runner rejects results for another run or an existing macro. It keeps each imported macro and the logs in the evidence directory. QOL safe mode is on and noclip is off; unrelated mods are disabled. Configuration and game saves are backed up and restored after the owned game process stops.
 
-Queued playback also needed an ownership fix: the input-blocking hook was rejecting the mod’s own clicks when the game consumed them after the enqueue callback returned. Playback now retains the exact queued-command identities, filters foreign entries, and marks its own consumption scope. A stray queued press injected before the first recorded jump was rejected while the full 10x replay completed. Its 724 input events and all positions through the input phase match direct playback. Repeated tests with the user’s queue + click-between-steps options are in progress.
+Queued playback also needed an ownership fix: the input-blocking hook was rejecting the mod’s own clicks when the game consumed them after the enqueue callback returned. Playback now retains the exact queued-command identities, filters foreign entries, and marks its own consumption scope. A stray queued press injected before the first recorded jump was rejected while the full 10x replay completed. Its 724 input events and all positions through the input phase match direct playback. The user’s queue + click-between-steps options completed 20/20 fresh-import 10x attempts; each injected foreign press was rejected, with no host-clock timeout warnings. The final queued implementation also completed a fresh normal-speed run at 100% (114.22 seconds). Evidence: `/tmp/blockwork-gd-macos-10x-queued-batch-20/manifest.json` and `/tmp/blockwork-gd-macos-normal-queued-final/manifest.json`.
 
 ## Observed results
 
@@ -37,3 +37,7 @@ python3 scripts/autotest-macos.py --runs 20 --speed 10 --output /tmp/blockwork-g
 The output directory must not already exist. `--queue`, `--cbs`, `--offset` and `--trace` explicitly select developer options. The successful reference runs use offset -1, queue off and click-between-steps off. Finite successful runs establish those observations; they do not prove success under every future machine load or unrelated mod configuration.
 
 Computer-use access to Geometry Dash was rejected by that tool’s approval review. No computer-use controls were used for the game; execution and evidence came from the mod’s own test harness and the official Steam launcher. Visual/keybind interaction coverage is therefore not claimed.
+
+The private-repository CI jobs were rejected before startup by GitHub billing/spending limits. This is an external execution block, not a compiler result. The local universal mod compiles and links both architectures with a macOS 11.0 floor and no mixed-target warnings. Its final 3/3 fresh-import 10x acceptance batch passed on Apple Silicon; Windows compilation and Intel game runtime are not claimed.
+
+A separate universal smoke batch was interrupted on focus loss during its second attempt. That batch is recorded separately and is not counted among completed batches. The harness now reports paused/unfocused interruptions explicitly. Final evidence is also preserved in `build/macos-verification/summary.json`.

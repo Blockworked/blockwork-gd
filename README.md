@@ -49,7 +49,7 @@ git clone --branch v5.11.2 --depth 1 https://github.com/geode-sdk/geode .tools/g
 git clone https://github.com/geode-sdk/bindings .tools/bindings
 git -C .tools/bindings checkout 1605f500
 git clone https://github.com/Blockworked/Blockwork ../Blockwork
-git -C ../Blockwork checkout e285eac69af1759811b39aeedd861653bd06a30b
+git -C ../Blockwork checkout 65207fed4487cfb3568a3fc019025a17f66d3bbf
 source scripts/dev-env.sh
 geode sdk install-binaries
 geode profile add "$HOME/Library/Application Support/Steam/steamapps/common/Geometry Dash/Geometry Dash.app" --name gd-2.2081 mac

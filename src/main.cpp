@@ -468,6 +468,7 @@ void writeAutotestResult(std::string const& outcome, PlayLayer* layer = nullptr)
     result["elapsed_seconds"] = std::chrono::duration<double>(std::chrono::steady_clock::now() - autotestStart).count();
     if (layer) {
         result["level"] = std::string(layer->m_level->m_levelName);
+        result["level_key"] = levelmacros::keyFor(layer->m_level);
         result["percent"] = layer->getCurrentPercent();
         result["player_dead"] = layer->m_player1->m_isDead;
     }
@@ -843,6 +844,7 @@ class $modify(PlayLayer) {
 
     void pauseGame(bool unfocused) {
         PlayLayer::pauseGame(unfocused);
+        if (autotestLevelOpen) writeAutotestResult(unfocused ? "interrupted-unfocused" : "interrupted-paused", this);
         // TEMPORARY: confirm this hook actually fires on Escape at all
         // before trusting anything past this line.
         log::info("blockwork: pauseGame hook fired (unfocused={})", unfocused);

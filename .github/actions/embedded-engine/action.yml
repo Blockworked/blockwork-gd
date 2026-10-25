@@ -13,7 +13,7 @@ runs:
     - uses: actions/checkout@v4
       with:
         repository: Blockworked/Blockwork
-        ref: e285eac69af1759811b39aeedd861653bd06a30b
+        ref: 65207fed4487cfb3568a3fc019025a17f66d3bbf
         path: .blockwork-engine
         persist-credentials: false
     - uses: dtolnay/rust-toolchain@stable
@@ -38,7 +38,9 @@ runs:
           lipo -create -output "$ffi_lib" \
             "$engine_root/target/aarch64-apple-darwin/release/libblockwork_ffi.a" \
             "$engine_root/target/x86_64-apple-darwin/release/libblockwork_ffi.a"
-          lipo -verify_arch arm64 x86_64 "$ffi_lib"
+          for arch in arm64 x86_64; do
+            lipo "$ffi_lib" -verify_arch "$arch"
+          done
           ffi_include="$engine_root/blockwork-ffi/include"
         else
           cargo build --manifest-path "$engine_root/Cargo.toml" -p blockwork-ffi --release --locked --target x86_64-pc-windows-msvc
