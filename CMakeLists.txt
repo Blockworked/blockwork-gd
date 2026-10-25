@@ -3,7 +3,7 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if ("${CMAKE_SYSTEM_NAME}" STREQUAL "iOS" OR IOS)
     set(CMAKE_OSX_ARCHITECTURES "arm64")
-else()
+elseif (NOT DEFINED CMAKE_OSX_ARCHITECTURES)
     set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")
 endif()
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
@@ -57,9 +57,17 @@ endif()
 if (APPLE AND NOT IOS)
     find_library(CORE_FOUNDATION_LIB CoreFoundation REQUIRED)
     find_library(APPLICATION_SERVICES_LIB ApplicationServices REQUIRED)
+    find_library(SECURITY_LIB Security REQUIRED)
+    find_library(IOKIT_LIB IOKit REQUIRED)
+    find_library(APPKIT_LIB AppKit REQUIRED)
+    find_library(CORE_GRAPHICS_LIB CoreGraphics REQUIRED)
     target_link_libraries(${PROJECT_NAME}
         ${BLOCKWORK_FFI_LIB}
         ${CORE_FOUNDATION_LIB}
         ${APPLICATION_SERVICES_LIB}
+        ${SECURITY_LIB}
+        ${IOKIT_LIB}
+        ${APPKIT_LIB}
+        ${CORE_GRAPHICS_LIB}
     )
 endif()

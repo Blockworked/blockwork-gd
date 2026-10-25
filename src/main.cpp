@@ -4,6 +4,7 @@
 #include <Geode/modify/CCKeyboardDispatcher.hpp>
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <map>
 #include <vector>
 #include <fstream>
@@ -252,6 +253,26 @@ bool frameLockedEnabled() {
 
 // Set while our own playback drives handleButton, so it isn't recorded back.
 bool inPlaybackInput = false;
+std::vector<PlayerButtonCommand> playbackQueuedButtons;
+int rejectedPlaybackQueueInputs = 0;
+bool autotestStrayQueueProbe = false;
+bool strayQueueInjected = false;
+struct PlaybackInputScope {
+    bool previous = inPlaybackInput;
+    explicit PlaybackInputScope(bool enabled = true) { if (enabled) inPlaybackInput = true; }
+    ~PlaybackInputScope() { inPlaybackInput = previous; }
+};
+
+void queuePlaybackInput(GJBaseGameLayer* layer, bool secondary, bool down) {
+    auto size = layer->m_queuedButtons.size();
+    layer->queueButton(1, down, secondary, layer->m_timestamp);
+    if (layer->m_queuedButtons.size() > size) playbackQueuedButtons.push_back(layer->m_queuedButtons.back());
+}
+
+bool sameQueuedInput(PlayerButtonCommand const& a, PlayerButtonCommand const& b) {
+    return a.m_button == b.m_button && a.m_isPush == b.m_isPush && a.m_isPlayer2 == b.m_isPlayer2
+        && a.m_step == b.m_step && a.m_timestamp == b.m_timestamp;
+}
 // Held state per player as last seen by the recorder: the game also releases
 // buttons that were never held (level start), which isn't an input.
 bool recordHeld[2] = {false, false};
@@ -261,7 +282,7 @@ void onSyncInput(const char* name, bool isButton, bool down) {
     if (!frameLockedLayer) {
         return;
     }
-    struct Guard { Guard() { inPlaybackInput = true; } ~Guard() { inPlaybackInput = false; } } guard;
+    PlaybackInputScope guard;
     std::string_view n = name;
     if (Mod::get()->getSettingValue<bool>("trace-steps")) {
         log::info("[trace-input] {} {} {} at step {}", name, isButton, down, frameLockedStep);
@@ -289,10 +310,10 @@ void onSyncInput(const char* name, bool isButton, bool down) {
     }
     bool queued = Mod::get()->getSettingValue<bool>("queue-inputs");
     if (isButton ? n == "Left" : (n == "Space" || n == "UpArrow")) {
-        if (queued) frameLockedLayer->queueButton(1, down, false, frameLockedLayer->m_timestamp);
+        if (queued) queuePlaybackInput(frameLockedLayer, false, down);
         else frameLockedLayer->handleButton(down, 1, true);
     } else if (isButton && n == "Right") {
-        if (queued) frameLockedLayer->queueButton(1, down, true, frameLockedLayer->m_timestamp);
+        if (queued) queuePlaybackInput(frameLockedLayer, true, down);
         else frameLockedLayer->handleButton(down, 1, false);
     }
 }
@@ -385,6 +406,7 @@ void endStepRecording(bool keep) {
 }
 
 void stopFrameLocked() {
+    playbackQueuedButtons.clear();
     if (frameLockedActive) {
         frameLockedActive = false;
         frameLockedLayer = nullptr;
@@ -409,6 +431,8 @@ bool startFrameLocked(GJBaseGameLayer* layer) {
     }
     frameLockedActive = true;
     frameLockedStep = 0;
+    rejectedPlaybackQueueInputs = 0;
+    strayQueueInjected = false;
     frameLockedLayer = layer;
     if (Mod::get()->getSettingValue<bool>("substep-clicks")) {
         layer->m_clickBetweenSteps = true;
@@ -423,6 +447,35 @@ bool startFrameLocked(GJBaseGameLayer* layer) {
 // script can drive a full macro run with no clicking. Consumed on use.
 // Progress is reported to the Geode log under "[autotest]".
 bool autotestLevelOpen = false;
+std::string autotestRunId;
+std::string autotestMacroId;
+bool autotestFreshImport = false;
+bool autotestResultWritten = false;
+auto autotestStart = std::chrono::steady_clock::now();
+
+void writeAutotestResult(std::string const& outcome, PlayLayer* layer = nullptr) {
+    if (autotestRunId.empty() || autotestResultWritten) return;
+    autotestResultWritten = true;
+    matjson::Value result;
+    result["run_id"] = autotestRunId;
+    result["outcome"] = outcome;
+    result["fresh_import"] = autotestFreshImport;
+    result["macro_id"] = autotestMacroId;
+    result["selected_macro_id"] = levelmacros::selectedMacroId();
+    result["step"] = frameLockedStep;
+    result["stray_queue_injected"] = strayQueueInjected;
+    result["rejected_foreign_queue_inputs"] = rejectedPlaybackQueueInputs;
+    result["elapsed_seconds"] = std::chrono::duration<double>(std::chrono::steady_clock::now() - autotestStart).count();
+    if (layer) {
+        result["level"] = std::string(layer->m_level->m_levelName);
+        result["percent"] = layer->getCurrentPercent();
+        result["player_dead"] = layer->m_player1->m_isDead;
+    }
+    std::ofstream out(Mod::get()->getSaveDir() / "autotest-result.json");
+    out << result.dump();
+    log::info("[autotest] result {}", result.dump());
+}
+
 
 class AutoTestOpener : public LevelDownloadDelegate {
 public:
@@ -469,6 +522,8 @@ void maybeStartAutotest() {
         return;
     }
     auto json = parsed.unwrap();
+    autotestRunId = json["run_id"].asString().unwrapOr("");
+    autotestStrayQueueProbe = json["stray_queue_probe"].asBool().unwrapOr(false);
     if (auto ldm = json["ldm"].asBool()) {
         // Low detail mode is game variable 0042.
         GameManager::get()->setGameVariable("0042", ldm.unwrap());
@@ -476,7 +531,10 @@ void maybeStartAutotest() {
     }
     if (auto fps = json["fps"].asDouble()) {
         // Frames shorter than a physics step let a real input land on any step.
+#ifdef GEODE_IS_WINDOWS
+        // CCApplication exposes this VSync switch only on Windows.
         CCApplication::sharedApplication()->toggleVerticalSync(false);
+#endif
         CCApplication::sharedApplication()->setAnimationInterval(1.0 / fps.unwrap());
         log::info("[autotest] fps -> {}", fps.unwrap());
     }
@@ -484,7 +542,12 @@ void maybeStartAutotest() {
         log::info("[autotest] new_macro('{}') -> {}", newMacro.unwrap(), blockwork_create_macro(newMacro.unwrap().c_str()));
     }
     if (auto importPath = json["import_gdr"].asString()) {
-        log::info("[autotest] import_gdr('{}') -> {}", importPath.unwrap(), blockwork_import_gdr(importPath.unwrap().c_str()));
+        auto before = levelmacros::selectedMacroId();
+        int result = blockwork_import_gdr(importPath.unwrap().c_str());
+        autotestMacroId = levelmacros::selectedMacroId();
+        autotestFreshImport = result == 0 && !autotestMacroId.empty() && autotestMacroId != before;
+        log::info("[autotest] import_gdr('{}') -> {} (fresh={}, macro={})", importPath.unwrap(), result, autotestFreshImport, autotestMacroId);
+        if (!autotestFreshImport) { writeAutotestResult("import-failed"); return; }
     }
     if (json["import_pending"].asBool().unwrapOr(false)) {
         log::info("[autotest] import_pending -> {}", blockwork_import_pending_gdrs());
@@ -495,11 +558,14 @@ void maybeStartAutotest() {
         for (auto* level : CCArrayExt<GJGameLevel*>(locals)) {
             if (std::string(level->m_levelName) == localName.unwrap()) {
                 log::info("[autotest] using local level '{}'", localName.unwrap());
+                if (autotestFreshImport) levelmacros::link(levelmacros::keyFor(level), autotestMacroId);
                 AutoTestOpener::get().open(level);
                 return;
             }
         }
         log::error("[autotest] no local level named '{}'", localName.unwrap());
+        for (auto* level : CCArrayExt<GJGameLevel*>(locals)) log::info("[autotest] available local level '{}'", std::string(level->m_levelName));
+        writeAutotestResult("level-not-found");
         return;
     }
     int levelId = json["level_id"].asInt().unwrapOr(0);
@@ -653,6 +719,7 @@ class $modify(PlayLayer) {
         if (!PlayLayer::init(level, useReplay, dontCreateObjects)) {
             return false;
         }
+        if (autotestLevelOpen) autotestStart = std::chrono::steady_clock::now();
         // First entry into the level. Retries reuse this same PlayLayer and
         // go through resetLevel() instead, never back through init().
         if (stepRecordingWanted()) {
@@ -674,6 +741,7 @@ class $modify(PlayLayer) {
             return;
         }
         if (autotestLevelOpen) {
+            writeAutotestResult("died", this);
             log::info("[autotest] died at {}% on step {} (object id {} anticheat={} at {},{}; player at {},{})", getCurrentPercent(), stepRecordingActive ? recordStep : frameLockedStep, object ? object->m_objectID : -1, object == m_anticheatSpike, object ? object->getPositionX() : 0.f, object ? object->getPositionY() : 0.f, player->getPositionX(), player->getPositionY());
         }
         stopFrameLocked();
@@ -755,6 +823,7 @@ class $modify(PlayLayer) {
 
     void levelComplete() {
         PlayLayer::levelComplete();
+        if (autotestLevelOpen) writeAutotestResult("complete", this);
         if (frameLockedActive || stepRecordingActive) {
             log::info("[autotest] LEVEL COMPLETE on step {}", stepRecordingActive ? recordStep : frameLockedStep);
         }
@@ -794,45 +863,94 @@ class $modify(PlayLayer) {
     }
 };
 
+// macOS inlines processCommands into update, but calls processQueuedButtons
+// once per physics tick. Keep the common clock at that actual call boundary.
+void beforePhysicsInput(GJBaseGameLayer* layer) {
+    if (frameLockedActive && static_cast<GJBaseGameLayer*>(PlayLayer::get()) == layer) {
+        double timeMs = static_cast<double>(frameLockedStep - Mod::get()->getSettingValue<int64_t>("frame-offset")) * 1000.0 / kStepsPerSecond;
+        if (frameLockedStep < 60000 && Mod::get()->getSettingValue<bool>("trace-steps")) {
+            log::info("[trace] {} {} {}", frameLockedStep, layer->m_player1->getPositionX(), layer->m_player1->getPositionY());
+        }
+        blockwork_sync_step(timeMs, &onSyncInput);
+        frameLockedStep++;
+    }
+    bool isPlay = static_cast<GJBaseGameLayer*>(PlayLayer::get()) == layer;
+    if (stepRecordingActive && isPlay && recordStep < 9000 && Mod::get()->getSettingValue<bool>("trace-steps")) {
+        log::info("[trace] {} {} {}", recordStep, layer->m_player1->getPositionX(), layer->m_player1->getPositionY());
+    }
+    if (autotestLevelOpen && isPlay && stepRecordingActive) {
+        // Lets the test input generator follow the game's own step clock.
+        if (!stepFile) {
+#ifdef GEODE_IS_MACOS
+            auto path = std::filesystem::temp_directory_path() / "bw_step.txt";
+            stepFile = fopen(path.string().c_str(), "wb");
+#else
+            stepFile = fopen("Z:\\tmp\\bw_step.txt", "wb");
+#endif
+        }
+        if (stepFile) {
+            fseek(stepFile, 0, SEEK_SET);
+            fprintf(stepFile, "%lld %d              \n", recordStep, 1);
+            fflush(stepFile);
+        }
+    }
+}
+void afterPhysicsInput(GJBaseGameLayer* layer) {
+    if (stepRecordingActive && static_cast<GJBaseGameLayer*>(PlayLayer::get()) == layer) recordStep++;
+}
+
 class $modify(GJBaseGameLayer) {
     void processCommands(float dt, bool isHalfTick, bool isLastTick) {
-        if (frameLockedActive && static_cast<GJBaseGameLayer*>(PlayLayer::get()) == this) {
-            double timeMs = static_cast<double>(frameLockedStep - Mod::get()->getSettingValue<int64_t>("frame-offset")) * 1000.0 / kStepsPerSecond;
-            if (frameLockedStep < 60000 && Mod::get()->getSettingValue<bool>("trace-steps")) {
-                log::info("[trace] {} {} {}", frameLockedStep, m_player1->getPositionX(), m_player1->getPositionY());
-            }
-            blockwork_sync_step(timeMs, &onSyncInput);
-            frameLockedStep++;
-        }
-        bool isPlay = static_cast<GJBaseGameLayer*>(PlayLayer::get()) == this;
-        if (stepRecordingActive && isPlay && recordStep < 9000 && Mod::get()->getSettingValue<bool>("trace-steps")) {
-            log::info("[trace] {} {} {}", recordStep, m_player1->getPositionX(), m_player1->getPositionY());
-        }
-        if (autotestLevelOpen && isPlay && stepRecordingActive) {
-            // Lets the test input generator follow the game's own step clock.
-            if (!stepFile) {
-                stepFile = fopen("Z:\\tmp\\bw_step.txt", "wb");
-            }
-            if (stepFile) {
-                fseek(stepFile, 0, SEEK_SET);
-                fprintf(stepFile, "%lld %d              \n", recordStep, 1);
-                fflush(stepFile);
-            }
-        }
+#ifndef GEODE_IS_MACOS
+        beforePhysicsInput(this);
+#endif
         GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
-        if (stepRecordingActive && isPlay) {
-            recordStep++;
-        }
+#ifndef GEODE_IS_MACOS
+        afterPhysicsInput(this);
+#endif
     }
 
     void processQueuedButtons(float dt, bool clearInputQueue) {
+#ifdef GEODE_IS_MACOS
+        const bool physicsTick = dt > 0 && !inExtraUpdate;
+        if (physicsTick) beforePhysicsInput(this);
+#endif
         if (stepRecordingActive && !inPlaybackInput && !m_queuedButtons.empty()
             && static_cast<GJBaseGameLayer*>(PlayLayer::get()) == this) {
             for (auto const& c : m_queuedButtons) {
                 log::info("[trace-queue] rec={} cur={} dt={:.9f} btn={} push={} p2={} step={} ts={:.9f} m_ts={:.9f} lvlTime={:.9f}", recordStep, m_currentStep, dt, (int)c.m_button, c.m_isPush, c.m_isPlayer2, c.m_step, c.m_timestamp, m_timestamp, m_gameState.m_levelTime);
             }
         }
+        const bool queuedPlayback = frameLockedActive && frameLockedLayer == this
+            && Mod::get()->getSettingValue<bool>("queue-inputs");
+        if (queuedPlayback) {
+            if (autotestLevelOpen && autotestStrayQueueProbe && !strayQueueInjected && frameLockedStep == 301) {
+                queueButton(1, true, false, m_timestamp);
+                strayQueueInjected = true;
+                log::info("[autotest] injected foreign queued press before the first recorded jump");
+            }
+            // A queued macro click is applied after onSyncInput returns. Keep
+            // its ownership until consumption, and remove foreign queue entries
+            // so allowing our own handleButton calls cannot admit real clicks.
+            auto remaining = playbackQueuedButtons;
+            auto& queue = m_queuedButtons;
+            queue.erase(std::remove_if(queue.begin(), queue.end(), [&](auto const& command) {
+                auto found = std::find_if(remaining.begin(), remaining.end(), [&](auto const& own) {
+                    return sameQueuedInput(command, own);
+                });
+                if (found == remaining.end()) { rejectedPlaybackQueueInputs++; return true; }
+                remaining.erase(found);
+                return false;
+            }), queue.end());
+        }
+        PlaybackInputScope playback(queuedPlayback);
         GJBaseGameLayer::processQueuedButtons(dt, clearInputQueue);
+        if (queuedPlayback && frameLockedActive) {
+            playbackQueuedButtons.assign(m_queuedButtons.begin(), m_queuedButtons.end());
+        }
+#ifdef GEODE_IS_MACOS
+        if (physicsTick) afterPhysicsInput(this);
+#endif
     }
 
     void handleButton(bool down, int button, bool isPlayer1) {

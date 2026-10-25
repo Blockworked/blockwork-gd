@@ -91,3 +91,9 @@ winsdk_vfs_overlay.yaml
 # Python bytecode caches
 __pycache__/
 *.py[cod]
+# Local Geode SDK and CMake user configuration
+.tools/
+CMakeUserPresets.json
+
+# Embedded engine checkout used by CI
+/.blockwork-engine/

@@ -1,0 +1,37 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "mac-dev",
+      "displayName": "Geode macOS development (Apple Silicon)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/mac-dev",
+      "environment": {
+        "PATH": "$penv{HOME}/.local/bin:$penv{PATH}",
+        "GEODE_SDK": "${sourceDir}/.tools/geode-sdk",
+        "CPM_SOURCE_CACHE": "${sourceDir}/.tools/cpm-cache",
+        "GEODE_BINDINGS_REPO_PATH": "${sourceDir}/.tools/bindings"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "SKIP_BUILDING_CODEGEN": false,
+        "BLOCKWORK_FFI_LIB": "${sourceDir}/../Blockwork/target/aarch64-apple-darwin/release/libblockwork_ffi.a",
+        "BLOCKWORK_FFI_INCLUDE_DIR": "${sourceDir}/../Blockwork/blockwork-ffi/include"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "mac-dev",
+      "configurePreset": "mac-dev",
+      "jobs": 4
+    }
+  ]
+}
