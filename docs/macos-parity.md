@@ -90,3 +90,17 @@ With the actual user profile preserved, the final CI package completed 20/20 fre
 After all owned game processes stopped, all ten configuration/save files matched their backups byte-for-byte. The two original user macros also remain byte-identical. Test imports were archived outside the live configuration, and the latest successful full replay (`f458dad4d3cf463fb0a4f108db4d0588`) was intentionally renamed, selected and linked to local Bloodbath Infinity 2. QOL speed, safe mode, enabled mods and the remaining preferences were restored.
 
 Evidence: `build/macos-verification/ci-40262690447.json`, `wallclock-ci-normal-vs-10x-traces.json`, `final-settings-restoration.json`, the `blockwork-gd-macos-wallclock-*.json` manifests, and `user-profile-runtime-evidence.tar.gz`. The archive preserves raw logs, macro copies and manifests, including the failed attempt. The earlier failed start's likely imported macro is separately identified by timestamp and matching instruction payload in `failed-start-import-candidate.json`; it is not retroactively marked as a verified successful run.
+
+## Native startup diagnostics
+
+Two opt-in diagnostics isolate initialization from full-level playback. `--particle-plist-probe COUNT` calls the game's exact `CCDictionary::createWithContentsOfFileThreadSafe` path for `glitterEffect.plist`, checks all 51 keys, releases each owned dictionary, and records the resolved asset's SHA-256. Two 10-launch batches completed 100,000 parses each: one with normal startup state, one with Geode's previous-crash marker simulated. All 200,000 native parses succeeded without a new crash report. The asset hash remains `8140a4d21dd2be18acd41c4fcdf4e341201b743fcdf373ce464ee0eb66847b83`. This is stronger coverage of the original loading stack than the separate Foundation-only helper, but it does not reproduce the complete PlayLayer initialization or establish the earlier failure's cause.
+
+`--startup-probe` opens the local level using a new import and waits until the next frame after all mod initialization hooks return, then reports `startup-probe-complete`. It verifies the exact level, fresh/selected macro identity and a live player; it does not play the entire level. `--simulate-previous-crash` recreates Geode recovery state for either diagnostic, restores the previous marker afterward, and retains a real crash's recovery flag if a new crash occurs. The startup result also checks whether the actual recovery popup is present in the game's scene. `--legacy-startup-timing`, available only with the startup probe, reproduces the former speed-scaled scene delays for a controlled comparison; regular playback always uses wall-time startup guards.
+
+```sh
+python3 scripts/autotest-macos.py --keep-profile --speed 10 --particle-plist-probe 10000 --runs 10 --output /tmp/blockwork-plist-new
+python3 scripts/autotest-macos.py --keep-profile --speed 10 --startup-probe --simulate-previous-crash --legacy-startup-timing --runs 30 --output /tmp/blockwork-startup-legacy-new
+python3 scripts/autotest-macos.py --keep-profile --speed 10 --startup-probe --simulate-previous-crash --runs 30 --output /tmp/blockwork-startup-walltime-new
+```
+
+Every diagnostic launch still imports the GDR freshly. Diagnostic success has a separate manifest gate and outcome and is never counted as a full-level completion. The production CI package is restored after local diagnostic-package tests.

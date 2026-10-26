@@ -452,6 +452,11 @@ std::string autotestMacroId;
 bool autotestFreshImport = false;
 bool autotestResultWritten = false;
 bool autotestRecordingProbe = false;
+bool autotestStartupProbe = false;
+bool autotestLegacyStartupTiming = false;
+bool autotestRecoveryPopupPresent = false;
+int autotestParticlePlistIterations = 0;
+std::string autotestParticlePlistPath;
 std::vector<RecordedInput> autotestRecordedInputs;
 auto autotestStart = std::chrono::steady_clock::now();
 
@@ -462,6 +467,7 @@ void writeAutotestProgress(char const* phase) {
     matjson::Value progress;
     progress["run_id"] = autotestRunId;
     progress["phase"] = phase;
+    progress["particle_plist_iterations"] = autotestParticlePlistIterations;
     progress["macro_id"] = autotestMacroId;
     progress["fresh_import"] = autotestFreshImport;
     std::ofstream out(Mod::get()->getSaveDir() / "autotest-progress.json");
@@ -476,6 +482,11 @@ void writeAutotestResult(std::string const& outcome, PlayLayer* layer = nullptr)
     result["outcome"] = outcome;
     result["fresh_import"] = autotestFreshImport;
     result["recording_probe"] = autotestRecordingProbe;
+    result["startup_probe"] = autotestStartupProbe;
+    result["legacy_startup_timing"] = autotestLegacyStartupTiming;
+    result["recovery_popup_present"] = autotestRecoveryPopupPresent;
+    result["particle_plist_iterations"] = autotestParticlePlistIterations;
+    if (!autotestParticlePlistPath.empty()) result["particle_plist_path"] = autotestParticlePlistPath;
     if (autotestRecordingProbe) {
         result["record_step"] = recordStep;
         result["recorded_inputs"] = matjson::Value::array();
@@ -531,6 +542,17 @@ public:
     }
 };
 
+bool hasCrashRecoveryLabel(CCNode* node, int depth = 0) {
+    if (!node || depth > 32) return false;
+    if (auto* label = typeinfo_cast<CCLabelBMFont*>(node); label && std::string(label->getString()) == "Crashed") return true;
+    if (auto* children = node->getChildren()) {
+        for (auto* child : CCArrayExt<CCNode*>(children)) {
+            if (hasCrashRecoveryLabel(child, depth + 1)) return true;
+        }
+    }
+    return false;
+}
+
 bool autotestStarted = false;
 
 void maybeStartAutotest() {
@@ -553,6 +575,8 @@ void maybeStartAutotest() {
     autotestRunId = json["run_id"].asString().unwrapOr("");
     autotestStrayQueueProbe = json["stray_queue_probe"].asBool().unwrapOr(false);
     autotestRecordingProbe = json["recording_probe"].asBool().unwrapOr(false);
+    autotestStartupProbe = json["startup_probe"].asBool().unwrapOr(false);
+    autotestRecoveryPopupPresent = hasCrashRecoveryLabel(CCDirector::get()->getRunningScene());
     writeAutotestProgress("request-read");
     if (auto ldm = json["ldm"].asBool()) {
         // Low detail mode is game variable 0042.
@@ -582,6 +606,28 @@ void maybeStartAutotest() {
     }
     if (json["import_pending"].asBool().unwrapOr(false)) {
         log::info("[autotest] import_pending -> {}", blockwork_import_pending_gdrs());
+    }
+    // Explicit diagnostic for the native resource-loading stack from a prior
+    // macOS initialization crash. This is separate from replay acceptance.
+    if (auto iterations = json["particle_plist_probe"].asInt(); iterations && iterations.unwrap() > 0) {
+        int count = static_cast<int>(std::min<int64_t>(iterations.unwrap(), 10000));
+        autotestParticlePlistPath = CCFileUtils::sharedFileUtils()->fullPathForFilename("glitterEffect.plist", false);
+        writeAutotestProgress("particle-plist-probing");
+        for (int i = 0; i < count; ++i) {
+            // ThreadSafe returns an owned dictionary, not an autoreleased one.
+            auto* dictionary = CCDictionary::createWithContentsOfFileThreadSafe("glitterEffect.plist");
+            bool valid = dictionary && dictionary->count() == 51;
+            if (dictionary) dictionary->release();
+            if (!valid) {
+                writeAutotestResult("particle-plist-probe-invalid");
+                return;
+            }
+            ++autotestParticlePlistIterations;
+            if (autotestParticlePlistIterations % 100 == 0) writeAutotestProgress("particle-plist-probing");
+        }
+        writeAutotestProgress("particle-plist-probe-complete");
+        writeAutotestResult("particle-plist-probe-complete");
+        return;
     }
     // A local (My Levels) copy by name wins over downloading.
     if (auto localName = json["local_name"].asString()) {
@@ -712,6 +758,13 @@ class $modify(BlockworkMenuLayer, MenuLayer) {
             return false;
         }
         gameFinishedLoading = true;
+        // Only the explicit startup diagnostic may reproduce the old action-
+        // clock delays. Normal playback always uses the wall-time guard.
+        if (auto request = file::readJson(Mod::get()->getSaveDir() / "autotest.json")) {
+            auto json = request.unwrap();
+            autotestLegacyStartupTiming = json["startup_probe"].asBool().unwrapOr(false)
+                && json["legacy_startup_timing"].asBool().unwrapOr(false);
+        }
         m_fields->autotestReadyAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
         // Opening a level straight from init gets overwritten by the menu's
         // own scene swap, so give it a moment to settle first.
@@ -726,7 +779,7 @@ class $modify(BlockworkMenuLayer, MenuLayer) {
     void startAutotest() {
         // QOL's speedhack also accelerates scene actions. Keep the startup
         // settling interval in wall time at every requested playback speed.
-        if (std::chrono::steady_clock::now() < m_fields->autotestReadyAt) {
+        if (!autotestLegacyStartupTiming && std::chrono::steady_clock::now() < m_fields->autotestReadyAt) {
             runAction(CCSequence::create(CCDelayTime::create(0.1f),
                 CCCallFunc::create(this, callfunc_selector(BlockworkMenuLayer::startAutotest)), nullptr));
             return;
@@ -755,7 +808,7 @@ class $modify(BlockworkLevelInfoLayer, LevelInfoLayer) {
     }
 
     void autotestPlay() {
-        if (std::chrono::steady_clock::now() < m_fields->autotestReadyAt) {
+        if (!autotestLegacyStartupTiming && std::chrono::steady_clock::now() < m_fields->autotestReadyAt) {
             runAction(CCSequence::create(CCDelayTime::create(0.1f),
                 CCCallFunc::create(this, callfunc_selector(BlockworkLevelInfoLayer::autotestPlay)), nullptr));
             return;
@@ -775,6 +828,16 @@ class $modify(PlayLayer) {
         if (autotestLevelOpen) {
             autotestStart = std::chrono::steady_clock::now();
             writeAutotestProgress("play-layer-ready");
+            if (autotestStartupProbe) {
+                // Observe the next frame so every mod's outer init hook has
+                // returned before the runner records initialization success.
+                Ref<PlayLayer> layer = this;
+                Loader::get()->queueInMainThread([layer] {
+                    if (PlayLayer::get() == layer.data()) writeAutotestResult("startup-probe-complete", layer.data());
+                    else writeAutotestResult("startup-probe-layer-changed");
+                });
+                return true;
+            }
         }
         // First entry into the level. Retries reuse this same PlayLayer and
         // go through resetLevel() instead, never back through init().

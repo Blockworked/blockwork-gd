@@ -75,6 +75,10 @@ def main():
     parser.add_argument('--cbs', action='store_true')
     parser.add_argument('--trace', action='store_true')
     parser.add_argument('--recording-probe', action='store_true', help='verify step recording separately from full-level playback')
+    parser.add_argument('--particle-plist-probe', type=int, default=0, metavar='COUNT', help='diagnose native particle-plist loading separately from playback (1..10000 parses per launch)')
+    parser.add_argument('--startup-probe', action='store_true', help='verify level initialization separately from full-level replay')
+    parser.add_argument('--legacy-startup-timing', action='store_true', help='reproduce the old action-clock delays during startup diagnostics')
+    parser.add_argument('--simulate-previous-crash', action='store_true', help='exercise Geode recovery state during the particle-plist diagnostic')
     parser.add_argument('--keep-profile', action='store_true', help='preserve other enabled mods and QOL safe-mode/music preferences')
     parser.add_argument('--stray-queue', action='store_true', help='inject and verify rejection of a foreign queued press')
     parser.add_argument('--output', type=Path, required=True)
@@ -87,6 +91,14 @@ def main():
         parser.error('--stray-queue requires --queue.')
     if args.recording_probe and args.stray_queue:
         parser.error('--stray-queue is a playback test; use it separately from --recording-probe.')
+    if not 0 <= args.particle_plist_probe <= 10000 or (args.particle_plist_probe and (args.recording_probe or args.stray_queue)):
+        parser.error('--particle-plist-probe accepts 1..10000 and must be separate from recording/foreign-input probes.')
+    if args.startup_probe and (args.particle_plist_probe or args.recording_probe or args.stray_queue):
+        parser.error('--startup-probe must be separate from particle/recording/foreign-input probes.')
+    if args.legacy_startup_timing and not args.startup_probe:
+        parser.error('--legacy-startup-timing requires --startup-probe.')
+    if args.simulate_previous_crash and not (args.particle_plist_probe or args.startup_probe):
+        parser.error('--simulate-previous-crash requires a particle or startup diagnostic.')
     executable = args.game / 'Contents/MacOS/Geometry Dash'
     if game_pids(executable):
         parser.error('Geometry Dash is already running; close it before starting this isolated test.')
@@ -108,6 +120,9 @@ def main():
     for name in ['CCGameManager.dat', 'CCLocalLevels.dat']:
         path = base.parents[1] / name
         backups[path] = path.read_bytes()
+    last_crashed = args.game / 'Contents/geode/crashlogs/last-crashed'
+    if args.simulate_previous_crash:
+        backups[last_crashed] = last_crashed.read_bytes() if last_crashed.exists() else None
     backup_dir = args.output / 'settings-before'
     backup_dir.mkdir()
     for index, (path, data) in enumerate(backups.items()):
@@ -115,15 +130,21 @@ def main():
             (backup_dir / f'{index}-{path.parent.name}-{path.name}').write_bytes(data)
     for name in ['CCGameManager.dat', 'CCLocalLevels.dat']:
         shutil.copy2(base.parents[1] / name, backup_dir / name)
-    manifest = {'gdr': str(args.gdr.resolve()), 'gdr_sha256': hashlib.sha256(args.gdr.read_bytes()).hexdigest(),
+    gate = ('particle-plist-diagnostic' if args.particle_plist_probe else
+            'startup-diagnostic' if args.startup_probe else
+            'step-recording' if args.recording_probe else 'full-level-playback')
+    manifest = {'gate': gate, 'gdr': str(args.gdr.resolve()), 'gdr_sha256': hashlib.sha256(args.gdr.read_bytes()).hexdigest(),
                 'level': args.level, 'qol_speed': args.speed, 'frame_offset': args.offset,
-                'queue': args.queue, 'cbs': args.cbs, 'stray_queue_probe': args.stray_queue, 'recording_probe': args.recording_probe, 'keep_profile': args.keep_profile, 'runs': [],
+                'queue': args.queue, 'cbs': args.cbs, 'stray_queue_probe': args.stray_queue, 'recording_probe': args.recording_probe, 'particle_plist_probe': args.particle_plist_probe, 'startup_probe': args.startup_probe, 'legacy_startup_timing': args.legacy_startup_timing, 'keep_profile': args.keep_profile, 'runs': [],
                 'macos': platform.mac_ver()[0], 'architecture': platform.machine(),
                 'shutdown_signal': 'SIGINT',
+                'simulated_previous_crash': args.simulate_previous_crash,
                 'mod_package_sha256': hashlib.sha256((args.game / 'Contents/geode/mods' / (MOD + '.geode')).read_bytes()).hexdigest()}
     save(args.output / 'manifest.json', manifest)
     steam = Path.home() / 'Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx'
     launched = False
+    real_crash_observed = False
+    initial_crash_reports = set(last_crashed.parent.glob('*.log'))
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(130))
     try:
         loader = load(files[0])
@@ -152,13 +173,16 @@ def main():
         seen_macros = set(path.stem for path in (bw / 'macros').glob('*.json'))
         for index in range(args.runs):
             run_id = uuid.uuid4().hex
-            request = {'run_id': run_id, 'local_name': args.level, 'import_gdr': str(args.gdr.resolve()), 'stray_queue_probe': args.stray_queue, 'recording_probe': args.recording_probe}
+            request = {'run_id': run_id, 'local_name': args.level, 'import_gdr': str(args.gdr.resolve()), 'stray_queue_probe': args.stray_queue, 'recording_probe': args.recording_probe, 'particle_plist_probe': args.particle_plist_probe, 'startup_probe': args.startup_probe, 'legacy_startup_timing': args.legacy_startup_timing}
             save(files[5], request)
             files[6].unlink(missing_ok=True)
             files[7].unlink(missing_ok=True)
             before_logs = set((args.game / 'Contents/geode/logs').glob('*.log'))
             crash_dir = args.game / 'Contents/geode/crashlogs'
             before_crashes = set(crash_dir.glob('*.log'))
+            if args.simulate_previous_crash:
+                last_crashed.parent.mkdir(parents=True, exist_ok=True)
+                last_crashed.write_text('Intentional Blockwork recovery-state diagnostic\n')
             launched = True
             launcher_log = (args.output / f'run-{index + 1}-launcher.log').open('w')
             launcher = subprocess.Popen([str(steam), '-applaunch', '322170'], stdout=launcher_log, stderr=subprocess.STDOUT)
@@ -203,6 +227,19 @@ def main():
                                 and result.get('selected_macro_id') == macro_id
                                 and result.get('level') == args.level and result.get('player_dead') is False
                                 and (not args.stray_queue or (result.get('stray_queue_injected') and result.get('rejected_foreign_queue_inputs', 0) >= 1)))
+            if args.startup_probe:
+                result['passed'] = (result.get('outcome') == 'startup-probe-complete'
+                                    and result['verified_fresh_macro'] and result.get('selected_macro_id') == macro_id
+                                    and result.get('level') == args.level and result.get('player_dead') is False
+                                    and result.get('legacy_startup_timing') == args.legacy_startup_timing
+                                    and (not args.simulate_previous_crash or result.get('recovery_popup_present')))
+            if args.particle_plist_probe:
+                result['passed'] = (result.get('outcome') == 'particle-plist-probe-complete'
+                                    and result['verified_fresh_macro'] and result.get('selected_macro_id') == macro_id
+                                    and result.get('particle_plist_iterations') == args.particle_plist_probe)
+                resource = Path(result.get('particle_plist_path', ''))
+                if resource.is_file():
+                    result['particle_plist_sha256'] = hashlib.sha256(resource.read_bytes()).hexdigest()
             if args.recording_probe:
                 expected = [{'step': step, 'secondary': secondary, 'down': down}
                             for step, secondary, down in [(1, False, True), (2, False, False), (3, True, True), (4, True, False)]]
@@ -233,6 +270,7 @@ def main():
                 shutil.copy2(crash, destination)
                 result['crash_reports'].append(destination.name)
             if result['crash_reports']:
+                real_crash_observed = True
                 result['passed'] = False
             save(args.output / 'manifest.json', manifest)
             print(json.dumps(result), flush=True)
@@ -245,6 +283,9 @@ def main():
         if launched:
             stop_owned_game(executable)
         for path, data in backups.items():
+            # Restore simulated state, but retain a real crash's recovery flag.
+            if path == last_crashed and (real_crash_observed or set(last_crashed.parent.glob('*.log')) - initial_crash_reports):
+                continue
             if data is None:
                 path.unlink(missing_ok=True)
             else:
