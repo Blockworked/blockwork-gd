@@ -12,7 +12,13 @@
 #include <Geode/binding/LevelDownloadDelegate.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <cstdio>
+#include <cstdlib>
+#include <cctype>
+#ifdef GEODE_IS_MACOS
+#include <mach-o/dyld.h>
+#endif
 #include <Geode/modify/LevelInfoLayer.hpp>
+#include <Geode/modify/EditLevelLayer.hpp>
 #include <Geode/modify/MenuLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/ui/GeodeUI.hpp>
@@ -455,6 +461,8 @@ bool autotestRecordingProbe = false;
 bool autotestStartupProbe = false;
 bool autotestLegacyStartupTiming = false;
 bool autotestRecoveryPopupPresent = false;
+bool autotestLegacyLocalInfo = false;
+std::string autotestEntryPage;
 int autotestParticlePlistIterations = 0;
 std::string autotestParticlePlistPath;
 std::vector<RecordedInput> autotestRecordedInputs;
@@ -467,6 +475,7 @@ void writeAutotestProgress(char const* phase) {
     matjson::Value progress;
     progress["run_id"] = autotestRunId;
     progress["phase"] = phase;
+    progress["entry_page"] = autotestEntryPage;
     progress["particle_plist_iterations"] = autotestParticlePlistIterations;
     progress["macro_id"] = autotestMacroId;
     progress["fresh_import"] = autotestFreshImport;
@@ -483,6 +492,29 @@ void writeAutotestResult(std::string const& outcome, PlayLayer* layer = nullptr)
     result["fresh_import"] = autotestFreshImport;
     result["recording_probe"] = autotestRecordingProbe;
     result["startup_probe"] = autotestStartupProbe;
+    result["entry_page"] = autotestEntryPage;
+    if (autotestStartupProbe) {
+        matjson::Value allocator;
+        for (auto* name : {"MallocScribble", "MallocGuardEdges", "MallocCheckHeapStart", "MallocCheckHeapEach",
+                            "MallocCheckHeapAbort", "MallocCheckHeapSleep", "MallocErrorAbort", "MallocDebugReport"}) {
+            if (auto* value = std::getenv(name)) allocator[name] = std::string(value);
+        }
+        result["allocator_environment"] = allocator;
+#ifdef GEODE_IS_MACOS
+        result["steam_native_images"] = matjson::Value::array();
+        auto imageCount = _dyld_image_count();
+        for (uint32_t i = 0; i < imageCount; ++i) {
+            auto* image = _dyld_get_image_name(i);
+            if (!image) continue;
+            auto name = std::filesystem::path(image).filename().string();
+            auto lower = name;
+            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char ch) { return std::tolower(ch); });
+            if (lower.find("steam") != std::string::npos || lower.find("overlay") != std::string::npos) {
+                result["steam_native_images"].push(name);
+            }
+        }
+#endif
+    }
     result["legacy_startup_timing"] = autotestLegacyStartupTiming;
     result["recovery_popup_present"] = autotestRecoveryPopupPresent;
     result["particle_plist_iterations"] = autotestParticlePlistIterations;
@@ -506,6 +538,7 @@ void writeAutotestResult(std::string const& outcome, PlayLayer* layer = nullptr)
     result["elapsed_seconds"] = std::chrono::duration<double>(std::chrono::steady_clock::now() - autotestStart).count();
     if (layer) {
         result["level"] = std::string(layer->m_level->m_levelName);
+        result["level_type"] = static_cast<int>(layer->m_level->m_levelType);
         result["level_key"] = levelmacros::keyFor(layer->m_level);
         result["percent"] = layer->getCurrentPercent();
         result["player_dead"] = layer->m_player1->m_isDead;
@@ -527,9 +560,14 @@ public:
         log::info("[autotest] opening '{}' (level string {} bytes)", std::string(level->m_levelName), level->m_levelString.size());
         GameLevelManager::get()->m_levelDownloadDelegate = nullptr;
         autotestLevelOpen = true;
-        // Entered through the level page and its Play button, like a real
-        // run, so the game's anti-cheat doesn't see an out-of-flow start.
-        CCDirector::get()->replaceScene(CCTransitionFade::create(0.5f, LevelInfoLayer::scene(level, false)));
+        // My Levels uses EditLevelLayer; downloaded levels use LevelInfoLayer.
+        // Enter through the appropriate page's Play handler instead of
+        // constructing PlayLayer directly or using online UI for a local level.
+        bool local = level->m_levelType == GJLevelType::Editor && !autotestLegacyLocalInfo;
+        autotestEntryPage = local ? "local-edit" : "online-info";
+        writeAutotestProgress("level-page-opening");
+        auto* scene = local ? EditLevelLayer::scene(level) : LevelInfoLayer::scene(level, false);
+        CCDirector::get()->replaceScene(CCTransitionFade::create(0.5f, scene));
     }
 
     void levelDownloadFinished(GJGameLevel* level) override {
@@ -576,6 +614,7 @@ void maybeStartAutotest() {
     autotestStrayQueueProbe = json["stray_queue_probe"].asBool().unwrapOr(false);
     autotestRecordingProbe = json["recording_probe"].asBool().unwrapOr(false);
     autotestStartupProbe = json["startup_probe"].asBool().unwrapOr(false);
+    autotestLegacyLocalInfo = autotestStartupProbe && json["legacy_local_info"].asBool().unwrapOr(false);
     autotestRecoveryPopupPresent = hasCrashRecoveryLabel(CCDirector::get()->getRunningScene());
     writeAutotestProgress("request-read");
     if (auto ldm = json["ldm"].asBool()) {
@@ -815,6 +854,33 @@ class $modify(BlockworkLevelInfoLayer, LevelInfoLayer) {
         }
         writeAutotestProgress("play-requested");
         log::info("[autotest] pressing Play");
+        onPlay(nullptr);
+    }
+};
+
+class $modify(BlockworkEditLevelLayer, EditLevelLayer) {
+    struct Fields {
+        std::chrono::steady_clock::time_point autotestReadyAt;
+    };
+
+    bool init(GJGameLevel* level) {
+        if (!EditLevelLayer::init(level)) return false;
+        if (autotestLevelOpen) {
+            m_fields->autotestReadyAt = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            runAction(CCSequence::create(CCDelayTime::create(1.0f),
+                CCCallFunc::create(this, callfunc_selector(BlockworkEditLevelLayer::autotestPlay)), nullptr));
+        }
+        return true;
+    }
+
+    void autotestPlay() {
+        if (!autotestLegacyStartupTiming && std::chrono::steady_clock::now() < m_fields->autotestReadyAt) {
+            runAction(CCSequence::create(CCDelayTime::create(0.1f),
+                CCCallFunc::create(this, callfunc_selector(BlockworkEditLevelLayer::autotestPlay)), nullptr));
+            return;
+        }
+        writeAutotestProgress("play-requested");
+        log::info("[autotest] pressing local level Play");
         onPlay(nullptr);
     }
 };

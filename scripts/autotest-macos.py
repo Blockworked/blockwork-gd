@@ -18,6 +18,10 @@ import time
 import uuid
 
 MOD = 'com.blockworked.blockwork'
+MALLOC_DIAGNOSTICS = {'MallocScribble': '1', 'MallocGuardEdges': '1',
+                      'MallocCheckHeapStart': '1', 'MallocCheckHeapEach': '10000',
+                      'MallocCheckHeapAbort': '1', 'MallocCheckHeapSleep': '0',
+                      'MallocErrorAbort': '1', 'MallocDebugReport': 'stderr'}
 
 
 def load(path):
@@ -77,6 +81,10 @@ def main():
     parser.add_argument('--recording-probe', action='store_true', help='verify step recording separately from full-level playback')
     parser.add_argument('--particle-plist-probe', type=int, default=0, metavar='COUNT', help='diagnose native particle-plist loading separately from playback (1..10000 parses per launch)')
     parser.add_argument('--startup-probe', action='store_true', help='verify level initialization separately from full-level replay')
+    parser.add_argument('--malloc-diagnostics', action='store_true', help='launch the startup diagnostic directly with Steam SDK app-ID context and malloc scribbling/guard pages')
+    parser.add_argument('--allocator-via-steam', action='store_true', help='verify allocator flags inherited from a diagnostic Steam client instead of direct SDK launch')
+    parser.add_argument('--steam-overlay-diagnostics', action='store_true', help='include the same Steam loader/overlay libraries during malloc diagnostics')
+    parser.add_argument('--legacy-local-info', action='store_true', help='reproduce prior local-level navigation through the online info page during startup diagnostics')
     parser.add_argument('--legacy-startup-timing', action='store_true', help='reproduce the old action-clock delays during startup diagnostics')
     parser.add_argument('--simulate-previous-crash', action='store_true', help='exercise Geode recovery state during the particle-plist diagnostic')
     parser.add_argument('--keep-profile', action='store_true', help='preserve other enabled mods and QOL safe-mode/music preferences')
@@ -95,6 +103,14 @@ def main():
         parser.error('--particle-plist-probe accepts 1..10000 and must be separate from recording/foreign-input probes.')
     if args.startup_probe and (args.particle_plist_probe or args.recording_probe or args.stray_queue):
         parser.error('--startup-probe must be separate from particle/recording/foreign-input probes.')
+    if args.allocator_via_steam and not args.malloc_diagnostics:
+        parser.error('--allocator-via-steam requires --malloc-diagnostics.')
+    if args.steam_overlay_diagnostics and not args.malloc_diagnostics:
+        parser.error('--steam-overlay-diagnostics requires --malloc-diagnostics.')
+    if args.legacy_local_info and not args.startup_probe:
+        parser.error('--legacy-local-info requires --startup-probe.')
+    if args.malloc_diagnostics and not args.startup_probe:
+        parser.error('--malloc-diagnostics requires --startup-probe.')
     if args.legacy_startup_timing and not args.startup_probe:
         parser.error('--legacy-startup-timing requires --startup-probe.')
     if args.simulate_previous_crash and not (args.particle_plist_probe or args.startup_probe):
@@ -133,9 +149,13 @@ def main():
     gate = ('particle-plist-diagnostic' if args.particle_plist_probe else
             'startup-diagnostic' if args.startup_probe else
             'step-recording' if args.recording_probe else 'full-level-playback')
-    manifest = {'gate': gate, 'gdr': str(args.gdr.resolve()), 'gdr_sha256': hashlib.sha256(args.gdr.read_bytes()).hexdigest(),
+    manifest = {'launcher': 'steam-sdk-debug' if args.malloc_diagnostics and not args.allocator_via_steam else 'steam',
+                'malloc_diagnostics': args.malloc_diagnostics,
+                'steam_overlay_diagnostics': args.steam_overlay_diagnostics,
+                'allocator_via_steam': args.allocator_via_steam,
+                'allocator_flags': MALLOC_DIAGNOSTICS if args.malloc_diagnostics else {}, 'gate': gate, 'gdr': str(args.gdr.resolve()), 'gdr_sha256': hashlib.sha256(args.gdr.read_bytes()).hexdigest(),
                 'level': args.level, 'qol_speed': args.speed, 'frame_offset': args.offset,
-                'queue': args.queue, 'cbs': args.cbs, 'stray_queue_probe': args.stray_queue, 'recording_probe': args.recording_probe, 'particle_plist_probe': args.particle_plist_probe, 'startup_probe': args.startup_probe, 'legacy_startup_timing': args.legacy_startup_timing, 'keep_profile': args.keep_profile, 'runs': [],
+                'queue': args.queue, 'cbs': args.cbs, 'stray_queue_probe': args.stray_queue, 'recording_probe': args.recording_probe, 'particle_plist_probe': args.particle_plist_probe, 'startup_probe': args.startup_probe, 'legacy_local_info': args.legacy_local_info, 'legacy_startup_timing': args.legacy_startup_timing, 'keep_profile': args.keep_profile, 'runs': [],
                 'macos': platform.mac_ver()[0], 'architecture': platform.machine(),
                 'shutdown_signal': 'SIGINT',
                 'simulated_previous_crash': args.simulate_previous_crash,
@@ -173,7 +193,7 @@ def main():
         seen_macros = set(path.stem for path in (bw / 'macros').glob('*.json'))
         for index in range(args.runs):
             run_id = uuid.uuid4().hex
-            request = {'run_id': run_id, 'local_name': args.level, 'import_gdr': str(args.gdr.resolve()), 'stray_queue_probe': args.stray_queue, 'recording_probe': args.recording_probe, 'particle_plist_probe': args.particle_plist_probe, 'startup_probe': args.startup_probe, 'legacy_startup_timing': args.legacy_startup_timing}
+            request = {'run_id': run_id, 'local_name': args.level, 'import_gdr': str(args.gdr.resolve()), 'stray_queue_probe': args.stray_queue, 'recording_probe': args.recording_probe, 'particle_plist_probe': args.particle_plist_probe, 'startup_probe': args.startup_probe, 'legacy_local_info': args.legacy_local_info, 'legacy_startup_timing': args.legacy_startup_timing}
             save(files[5], request)
             files[6].unlink(missing_ok=True)
             files[7].unlink(missing_ok=True)
@@ -185,7 +205,26 @@ def main():
                 last_crashed.write_text('Intentional Blockwork recovery-state diagnostic\n')
             launched = True
             launcher_log = (args.output / f'run-{index + 1}-launcher.log').open('w')
-            launcher = subprocess.Popen([str(steam), '-applaunch', '322170'], stdout=launcher_log, stderr=subprocess.STDOUT)
+            launch_env = None
+            launch_cwd = None
+            launch_args = [str(steam), '-applaunch', '322170']
+            if args.malloc_diagnostics and not args.allocator_via_steam:
+                # Steam's supported developer context is confined to our own
+                # working directory; the installed game files are untouched.
+                launch_cwd = args.output.resolve() / 'steam-debug-working-directory'
+                launch_cwd.mkdir(exist_ok=True)
+                (launch_cwd / 'steam_appid.txt').write_text('322170')
+                launch_env = os.environ.copy()
+                launch_env.update({'SteamAppId': '322170', 'SteamGameId': '322170'})
+                launch_env.update(MALLOC_DIAGNOSTICS)
+                if args.steam_overlay_diagnostics:
+                    overlay_libraries = [steam.parent / name for name in ['steamloader.dylib', 'gameoverlayrenderer.dylib']]
+                    if not all(path.is_file() for path in overlay_libraries):
+                        raise RuntimeError('Steam loader/overlay libraries are missing from the installed Steam runtime.')
+                    launch_env['DYLD_INSERT_LIBRARIES'] = ':'.join(str(path) for path in overlay_libraries)
+                launch_args = [str(executable)]
+            launcher = subprocess.Popen(launch_args, cwd=launch_cwd, env=launch_env,
+                                        stdout=launcher_log, stderr=subprocess.STDOUT)
             start = time.monotonic()
             result = None
             game_seen = False
@@ -226,13 +265,20 @@ def main():
             result['passed'] = (result.get('outcome') == 'complete' and result['verified_fresh_macro']
                                 and result.get('selected_macro_id') == macro_id
                                 and result.get('level') == args.level and result.get('player_dead') is False
+                                and result.get('entry_page') == 'local-edit'
                                 and (not args.stray_queue or (result.get('stray_queue_injected') and result.get('rejected_foreign_queue_inputs', 0) >= 1)))
             if args.startup_probe:
                 result['passed'] = (result.get('outcome') == 'startup-probe-complete'
                                     and result['verified_fresh_macro'] and result.get('selected_macro_id') == macro_id
                                     and result.get('level') == args.level and result.get('player_dead') is False
+                                    and result.get('entry_page') == ('online-info' if args.legacy_local_info else 'local-edit')
                                     and result.get('legacy_startup_timing') == args.legacy_startup_timing
-                                    and (not args.simulate_previous_crash or result.get('recovery_popup_present')))
+                                    and (not args.simulate_previous_crash or result.get('recovery_popup_present'))
+                                    and (not args.steam_overlay_diagnostics or
+                                         {'steamloader.dylib', 'gameoverlayrenderer.dylib'}.issubset(result.get('steam_native_images', [])))
+                                    and (not args.malloc_diagnostics or all(
+                                        (result.get('allocator_environment') or {}).get(name) == value
+                                        for name, value in MALLOC_DIAGNOSTICS.items())))
             if args.particle_plist_probe:
                 result['passed'] = (result.get('outcome') == 'particle-plist-probe-complete'
                                     and result['verified_fresh_macro'] and result.get('selected_macro_id') == macro_id
@@ -259,6 +305,7 @@ def main():
                 result['passed'] = (result.get('outcome') == 'recording-probe-complete'
                                     and result['verified_fresh_macro'] and result.get('selected_macro_id') == macro_id
                                     and result.get('level') == args.level and result.get('record_step') == 8
+                                    and result.get('entry_page') == 'local-edit'
                                     and result.get('recorded_inputs') == expected and saved_events == expected)
             manifest['runs'].append(result)
             save(args.output / 'manifest.json', manifest)
