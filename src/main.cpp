@@ -455,6 +455,19 @@ bool autotestRecordingProbe = false;
 std::vector<RecordedInput> autotestRecordedInputs;
 auto autotestStart = std::chrono::steady_clock::now();
 
+// Persist startup phases before entering game code: a native initialization
+// crash must still leave the run/import identity available to the runner.
+void writeAutotestProgress(char const* phase) {
+    if (autotestRunId.empty()) return;
+    matjson::Value progress;
+    progress["run_id"] = autotestRunId;
+    progress["phase"] = phase;
+    progress["macro_id"] = autotestMacroId;
+    progress["fresh_import"] = autotestFreshImport;
+    std::ofstream out(Mod::get()->getSaveDir() / "autotest-progress.json");
+    out << progress.dump();
+}
+
 void writeAutotestResult(std::string const& outcome, PlayLayer* layer = nullptr) {
     if (autotestRunId.empty() || autotestResultWritten) return;
     autotestResultWritten = true;
@@ -540,6 +553,7 @@ void maybeStartAutotest() {
     autotestRunId = json["run_id"].asString().unwrapOr("");
     autotestStrayQueueProbe = json["stray_queue_probe"].asBool().unwrapOr(false);
     autotestRecordingProbe = json["recording_probe"].asBool().unwrapOr(false);
+    writeAutotestProgress("request-read");
     if (auto ldm = json["ldm"].asBool()) {
         // Low detail mode is game variable 0042.
         GameManager::get()->setGameVariable("0042", ldm.unwrap());
@@ -563,6 +577,7 @@ void maybeStartAutotest() {
         autotestMacroId = levelmacros::selectedMacroId();
         autotestFreshImport = result == 0 && !autotestMacroId.empty() && autotestMacroId != before;
         log::info("[autotest] import_gdr('{}') -> {} (fresh={}, macro={})", importPath.unwrap(), result, autotestFreshImport, autotestMacroId);
+        writeAutotestProgress("import-finished");
         if (!autotestFreshImport) { writeAutotestResult("import-failed"); return; }
     }
     if (json["import_pending"].asBool().unwrapOr(false)) {
@@ -689,11 +704,15 @@ void sendAttemptEnd() {
 }
 
 class $modify(BlockworkMenuLayer, MenuLayer) {
+    struct Fields {
+        std::chrono::steady_clock::time_point autotestReadyAt;
+    };
     bool init() {
         if (!MenuLayer::init()) {
             return false;
         }
         gameFinishedLoading = true;
+        m_fields->autotestReadyAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
         // Opening a level straight from init gets overwritten by the menu's
         // own scene swap, so give it a moment to settle first.
         runAction(CCSequence::create(
@@ -705,16 +724,27 @@ class $modify(BlockworkMenuLayer, MenuLayer) {
     }
 
     void startAutotest() {
+        // QOL's speedhack also accelerates scene actions. Keep the startup
+        // settling interval in wall time at every requested playback speed.
+        if (std::chrono::steady_clock::now() < m_fields->autotestReadyAt) {
+            runAction(CCSequence::create(CCDelayTime::create(0.1f),
+                CCCallFunc::create(this, callfunc_selector(BlockworkMenuLayer::startAutotest)), nullptr));
+            return;
+        }
         maybeStartAutotest();
     }
 };
 
 class $modify(BlockworkLevelInfoLayer, LevelInfoLayer) {
+    struct Fields {
+        std::chrono::steady_clock::time_point autotestReadyAt;
+    };
     bool init(GJGameLevel* level, bool challenge) {
         if (!LevelInfoLayer::init(level, challenge)) {
             return false;
         }
         if (autotestLevelOpen) {
+            m_fields->autotestReadyAt = std::chrono::steady_clock::now() + std::chrono::seconds(1);
             runAction(CCSequence::create(
                 CCDelayTime::create(1.0f),
                 CCCallFunc::create(this, callfunc_selector(BlockworkLevelInfoLayer::autotestPlay)),
@@ -725,6 +755,12 @@ class $modify(BlockworkLevelInfoLayer, LevelInfoLayer) {
     }
 
     void autotestPlay() {
+        if (std::chrono::steady_clock::now() < m_fields->autotestReadyAt) {
+            runAction(CCSequence::create(CCDelayTime::create(0.1f),
+                CCCallFunc::create(this, callfunc_selector(BlockworkLevelInfoLayer::autotestPlay)), nullptr));
+            return;
+        }
+        writeAutotestProgress("play-requested");
         log::info("[autotest] pressing Play");
         onPlay(nullptr);
     }
@@ -732,10 +768,14 @@ class $modify(BlockworkLevelInfoLayer, LevelInfoLayer) {
 
 class $modify(PlayLayer) {
     bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
+        if (autotestLevelOpen) writeAutotestProgress("play-layer-initializing");
         if (!PlayLayer::init(level, useReplay, dontCreateObjects)) {
             return false;
         }
-        if (autotestLevelOpen) autotestStart = std::chrono::steady_clock::now();
+        if (autotestLevelOpen) {
+            autotestStart = std::chrono::steady_clock::now();
+            writeAutotestProgress("play-layer-ready");
+        }
         // First entry into the level. Retries reuse this same PlayLayer and
         // go through resetLevel() instead, never back through init().
         if (stepRecordingWanted()) {
