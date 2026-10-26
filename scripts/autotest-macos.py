@@ -42,13 +42,24 @@ def stop_owned_game(executable):
         # Geode handles SIGTERM as a crash and opens crash recovery on the
         # next launch. SIGINT stops our owned test process without fabricating
         # a crash report; real spontaneous crashes remain untouched.
-        os.kill(pid, signal.SIGINT)
+        try:
+            os.kill(pid, signal.SIGINT)
+        except ProcessLookupError:
+            pass
     deadline = time.monotonic() + 5
     while game_pids(executable) and time.monotonic() < deadline:
         time.sleep(.1)
     for pid in game_pids(executable):
         if pid in pids:
-            os.kill(pid, signal.SIGKILL)
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    deadline = time.monotonic() + 5
+    while any(pid in pids for pid in game_pids(executable)):
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Owned game process did not stop; configuration restoration is unsafe.")
+        time.sleep(.1)
 
 
 def main():
@@ -214,7 +225,6 @@ def main():
                                     and result.get('recorded_inputs') == expected and saved_events == expected)
             manifest['runs'].append(result)
             save(args.output / 'manifest.json', manifest)
-            print(json.dumps(result), flush=True)
             stop_owned_game(executable)
             launched = False
             result['crash_reports'] = []
@@ -222,7 +232,10 @@ def main():
                 destination = args.output / f'run-{index + 1}-crash-{crash.name}'
                 shutil.copy2(crash, destination)
                 result['crash_reports'].append(destination.name)
+            if result['crash_reports']:
+                result['passed'] = False
             save(args.output / 'manifest.json', manifest)
+            print(json.dumps(result), flush=True)
             for log in set((args.game / 'Contents/geode/logs').glob('*.log')) - before_logs:
                 shutil.copy2(log, args.output / f'run-{index + 1}-{log.name}')
             if not result['passed']:

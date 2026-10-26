@@ -87,7 +87,7 @@ then run:
 
 ```sh
 python3 scripts/autotest-macos.py --level 'Bloodbath Infinity 2' --runs 1 --speed 1 --output /tmp/blockwork-gd-normal
-python3 scripts/autotest-macos.py --level 'Bloodbath Infinity 2' --runs 10 --speed 10 --output /tmp/blockwork-gd-10x
+python3 scripts/autotest-macos.py --level 'Bloodbath Infinity 2' --keep-profile --queue --cbs --stray-queue --runs 20 --speed 10 --output /tmp/blockwork-gd-10x
 ```
 
 Each attempt freshly imports `~/Downloads/ChesszDC-Bloodbath-Infinity-zBot.gdr`
@@ -96,8 +96,13 @@ its identity in the terminal result. The runner launches through Steam: direct
 Geode CLI launches exited before the menu on this installation. It temporarily
 enables QOL safe mode, disables noclip and unrelated mods, sets the requested QOL
 speed, and restores configuration files after stopping its game process. Existing
-game saves are backed up. The output directory must be new; it contains replay
-hashes, fresh macro copies, configuration backups, logs and result manifests.
+game saves are backed up. Use `--keep-profile` to preserve other enabled mods and
+QOL safe-mode/music preferences while testing the requested speed. Startup
+settling delays use wall time even with the speedhack enabled. The output directory must be new; it contains replay
+hashes, fresh macro copies, configuration backups, logs, crash reports and result
+manifests. Startup phase receipts retain the run/import identity if level
+initialization fails. Intentional shutdown uses SIGINT to avoid Geode treating
+normal test cleanup as a crash.
 A failed attempt stops the batch. Passing a finite batch is evidence for that
 batch, not a guarantee about all future hardware and mod configurations.
 

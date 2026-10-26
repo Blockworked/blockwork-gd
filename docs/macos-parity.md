@@ -2,6 +2,8 @@
 
 The live acceptance fixture is the local **Bloodbath Infinity 2** level and fresh imports of `~/Downloads/ChesszDC-Bloodbath-Infinity-zBot.gdr`. The existing user replay is not used as the acceptance macro.
 
+Latest status: the actual user profile completed 40 consecutive fresh-import 10x runs after the shutdown correction, including 20/20 on the final CI artifact. An earlier batch had one real startup SIGSEGV; its cause remains unproven, so these observations do not establish that the crash is resolved.
+
 ## Platform fix
 
 The macOS game inlines `GJBaseGameLayer::processCommands` into `update`. Its standalone function is hookable but is not called by normal play. Before the fix, a fresh import succeeded, playback remained at step zero, and the player died at 1.36%.
@@ -57,11 +59,11 @@ These short recording probes are not counted as level completions. The full repl
 
 Clean CI exposed a separate generator mismatch: Geode's default path downloads a mutable prebuilt Codegen binary, which emitted newer `Geode/mapping/*` includes for the older pinned bindings. Both platforms failed before compiling the mod. CI now builds Codegen from the same pinned bindings source (`SKIP_BUILDING_CODEGEN=OFF`), matching the working local preset; no SDK sources are modified.
 
-## Installed CI artifact acceptance
+## Initial CI artifact acceptance
 
 The successful Mac CI artifact was downloaded and installed for the final checks (SHA-256 `3b240ef6c01ccd1735a1b5b2890a37b6655919f66ee1984f9df4e505ca4f8d00`). It completed one fresh normal-speed queued+CBS run and 3/3 fresh queued+CBS+foreign-input QOL 10x runs. All three 10x schedules matched the normal run's 724 emitted input events exactly, including directions and physics steps. Position traces matched through step 26,840; the final input was step 26,741. Differences began in the finish sequence. Separate recording probes passed at both speeds, including persisted timestamps and duplicate suppression. Startup logs reported no input-grab, initialization, recording-save or host-clock timeout errors.
 
-The CI artifact remains installed. Its latest successful fresh replay is selected and linked to the local Bloodbath Infinity 2 level. Nine configuration/game-save files were verified byte-identical after testing, before the intentional final selection/link; the two original user macros remain byte-identical. Temporary test macros were archived outside the configuration directory.
+At that checkpoint the CI artifact and its latest successful fresh replay were installed and linked to the local Bloodbath Infinity 2 level; the later profile acceptance below supersedes that installed package. Nine configuration/game-save files were verified byte-identical after testing, before the intentional final selection/link; the two original user macros remain byte-identical. Temporary test macros were archived outside the configuration directory.
 
 Evidence: `build/macos-verification/ci-40236673481.json`, `ci-normal-vs-10x-traces.json`, and the four `blockwork-gd-macos-ci-*.json` manifests. Finite successful batches establish their observed 100% completion rate under the recorded configuration; they do not prove every future hardware or unrelated-mod configuration.
 
@@ -78,3 +80,13 @@ python3 scripts/autotest-macos.py --keep-profile --queue --cbs --stray-queue --t
 ```
 
 Evidence: `build/macos-verification/blockwork-gd-macos-user-profile-*.json`, `user-profile-normal-vs-10x-traces.json`, `user-profile-level-init-sigsegv.log`, and `particle-plist-standalone-stress.json`.
+
+## Final CI package and user-state verification
+
+[CI run 40262690447](https://github.com/Blockworked/blockwork-gd/actions/runs/40262690447) passed Windows and universal Mac builds at `9727bed`. The downloaded Mac package SHA-256 is `7b59595f2ee65330734b211ba0ddf36bee0c6f0e019693adb5aa2728b5cc1755`; both architecture slices target macOS 11.0. This package remains installed.
+
+With the actual user profile preserved, the final CI package completed 20/20 fresh-import queued+CBS+foreign-input QOL 10x runs, with no new crash reports. Every run retained a valid startup receipt and rejected the injected foreign input. All 724 input events exactly matched the preceding normal-speed run built from the same C++ source; positions matched through step 26,844, beyond the final input at 26,741. That normal-speed run completed at 100% in 114.70 seconds. Separate normal-speed and 10x recording probes both passed, including saved timestamps and duplicate suppression. The preceding SIGINT-only batch also completed 20/20 with no new crash reports. Neither later batch reproduces or proves the cause of the earlier SIGSEGV.
+
+After all owned game processes stopped, all ten configuration/save files matched their backups byte-for-byte. The two original user macros also remain byte-identical. Test imports were archived outside the live configuration, and the latest successful full replay (`f458dad4d3cf463fb0a4f108db4d0588`) was intentionally renamed, selected and linked to local Bloodbath Infinity 2. QOL speed, safe mode, enabled mods and the remaining preferences were restored.
+
+Evidence: `build/macos-verification/ci-40262690447.json`, `wallclock-ci-normal-vs-10x-traces.json`, `final-settings-restoration.json`, the `blockwork-gd-macos-wallclock-*.json` manifests, and `user-profile-runtime-evidence.tar.gz`. The archive preserves raw logs, macro copies and manifests, including the failed attempt. The earlier failed start's likely imported macro is separately identified by timestamp and matching instruction payload in `failed-start-import-candidate.json`; it is not retroactively marked as a verified successful run.
