@@ -13,7 +13,7 @@ runs:
     - uses: actions/checkout@v4
       with:
         repository: Blockworked/Blockwork
-        ref: 4028ba796210d4aa9b6e94a23b001afa3e349801
+        ref: fd23ad4c33205f643d9e12fb9f0ebd7b545fc873
         path: .blockwork-engine
         persist-credentials: false
     - uses: dtolnay/rust-toolchain@stable
