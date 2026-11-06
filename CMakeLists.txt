@@ -31,7 +31,7 @@ setup_geode_mod(${PROJECT_NAME})
 # directly instead of talked to over the loopback IPC connection the old
 # IpcClient used. Built separately (see blockwork-ffi/build-windows.sh and
 # build-macos.sh in the Blockwork repo) since this is a different Cargo
-# workspace with no submodule relationship to this one — point these at the
+# workspace with no submodule relationship to this one - point these at the
 # artifacts that script produces.
 if (NOT DEFINED BLOCKWORK_FFI_LIB)
     message(FATAL_ERROR "BLOCKWORK_FFI_LIB must point to the built blockwork_ffi static library (run blockwork-ffi/build-windows.sh or build-macos.sh in the Blockwork repo, then pass e.g. -DBLOCKWORK_FFI_LIB=/path/to/blockwork_ffi.lib)")
@@ -46,7 +46,7 @@ if (WIN32)
     # kernel32/ntdll/userenv/ws2_32/dbghelp: exactly what Rust's std +
     # our dependency tree need on *-pc-windows-msvc, per
     # `cargo rustc -- --print native-static-libs` (see build-windows.sh's
-    # own output) — not guessed, re-verify that list if blockwork-ffi's Rust
+    # own output) - not guessed, re-verify that list if blockwork-ffi's Rust
     # dependencies change.
     target_link_libraries(${PROJECT_NAME}
         ${BLOCKWORK_FFI_LIB}

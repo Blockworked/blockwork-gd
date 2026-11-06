@@ -858,11 +858,11 @@ $on_mod(Loaded) {
     // log) so no diagnostics from setup itself get silently dropped.
     blockwork_set_log_callback(&onMacrosLog);
 
-    // Must run on the main thread — macOS's Accessibility prompt
+    // Must run on the main thread - macOS's Accessibility prompt
     // (behind blockwork_init) requires it, and $on_mod(Loaded) already runs
     // there.
     auto dir = Mod::get()->getSettingValue<std::string>("blockwork-dir");
-    // Resolved unconditionally (cheap, harmless if unused) — blockwork_init
+    // Resolved unconditionally (cheap, harmless if unused) - blockwork_init
     // only actually uses this if it detects it's running under Wine on a
     // Linux host (Proton), where WH_KEYBOARD_LL/WH_MOUSE_LL and SendInput
     // don't work, so it launches this as a native Linux helper process
