@@ -17,7 +17,7 @@ A [Geode](https://geode-sdk.org) mod that runs and records [Blockwork](https://g
 
 ## Building
 
-The mod targets Windows Geometry Dash, including under Proton (`resources/linux-input.so` is the Linux-side input helper it starts there). These steps cross-compile the Windows build from Linux. `CMakeLists.txt` also links a macOS build (`blockwork-ffi/build-macos.sh` in Blockwork makes the library), but `just` has no recipe for it.
+The mod targets Windows Geometry Dash, including under Proton (`resources/linux-input.so`, which `just build` makes, is the Linux-side input helper it starts there). These steps cross-compile the Windows build from Linux. `CMakeLists.txt` also links a macOS build (`blockwork-ffi/build-macos.sh` in Blockwork makes the library), but `just` has no recipe for it.
 
 You need:
 - the [Geode CLI and SDK](https://docs.geode-sdk.org/getting-started/), with `GEODE_SDK` set
