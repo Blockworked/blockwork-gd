@@ -42,10 +42,8 @@ endif()
 target_include_directories(${PROJECT_NAME} PRIVATE ${BLOCKWORK_FFI_INCLUDE_DIR})
 
 if (WIN32)
-    # kernel32/ntdll/userenv/ws2_32/dbghelp: exactly what Rust's std +
-    # our dependency tree need on *-pc-windows-msvc, per
-    # `cargo rustc -- --print native-static-libs` (see build-windows.sh's
-    # own output) - not guessed, re-verify that list if blockwork-ffi's Rust
+    # The system libraries blockwork-ffi needs on *-pc-windows-msvc, from
+    # `cargo rustc -- --print native-static-libs`; recheck when its
     # dependencies change.
     target_link_libraries(${PROJECT_NAME}
         ${BLOCKWORK_FFI_LIB}
