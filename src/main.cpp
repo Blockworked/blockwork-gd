@@ -336,6 +336,9 @@ bool startFrameLocked(GJBaseGameLayer* layer) {
 // script can drive a full macro run with no clicking. Consumed on use.
 // Progress is reported to the Geode log under "[autotest]".
 bool autotestLevelOpen = false;
+// Where an autotest run writes the current step, for the input generator on
+// the Linux side of Wine (Z: is the Linux root). Only touched in an autotest.
+constexpr const char* AUTOTEST_STEP_FILE = "Z:\\tmp\\bw_step.txt";
 
 class AutoTestOpener : public LevelDownloadDelegate {
 public:
@@ -724,7 +727,7 @@ class $modify(GJBaseGameLayer) {
         if (autotestLevelOpen && isPlay && stepRecordingActive) {
             // Lets the test input generator follow the game's own step clock.
             if (!stepFile) {
-                stepFile = fopen("Z:\\tmp\\bw_step.txt", "wb");
+                stepFile = fopen(AUTOTEST_STEP_FILE, "wb");
             }
             if (stepFile) {
                 fseek(stepFile, 0, SEEK_SET);
