@@ -27,9 +27,8 @@ add_subdirectory($ENV{GEODE_SDK} ${CMAKE_CURRENT_BINARY_DIR}/geode)
 # Set up dependencies, resources, and link Geode.
 setup_geode_mod(${PROJECT_NAME})
 
-# blockwork-ffi: the Rust recording/playback engine (blockwork-core), embedded
-# directly instead of talked to over the loopback IPC connection the old
-# IpcClient used. Built separately (see blockwork-ffi/build-windows.sh and
+# blockwork-ffi: the Rust recording/playback engine (blockwork-core), linked
+# into the mod. Built separately (see blockwork-ffi/build-windows.sh and
 # build-macos.sh in the Blockwork repo) since this is a different Cargo
 # workspace with no submodule relationship to this one - point these at the
 # artifacts that script produces.
