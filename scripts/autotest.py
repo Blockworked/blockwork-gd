@@ -8,8 +8,12 @@ Mods that change physics timing are disabled for the run and restored after.
 """
 import argparse, signal, json, os, re, shutil, subprocess, sys, time, glob
 
-GD = os.path.expanduser("~/.local/share/Steam/steamapps/common/Geometry Dash")
-SAVE = os.path.expanduser("~/.local/share/Steam/steamapps/compatdata/322170/pfx/drive_c/users/steamuser/AppData/Local/GeometryDash/geode/mods")
+# A Steam install on Linux by default; GD_DIR and GD_MOD_SAVES point elsewhere.
+STEAM = os.path.expanduser("~/.local/share/Steam/steamapps")
+GD = os.environ.get("GD_DIR", f"{STEAM}/common/Geometry Dash")
+SAVE = os.environ.get("GD_MOD_SAVES", f"{STEAM}/compatdata/322170/pfx/drive_c/users/steamuser/AppData/Local/GeometryDash/geode/mods")
+# Blockwork's config folder as the game sees it under Proton (Z: is /).
+BLOCKWORK_DIR = os.environ.get("BLOCKWORK_DIR", "Z:" + os.path.expanduser("~/.config").replace("/", "\\"))
 APP_ID = "322170"
 MOD = "com.blockworked.blockwork"
 KEEP = {"geode.loader", "thesillydoggo.qolmod", MOD}
@@ -155,7 +159,7 @@ def main():
         settings_path = os.path.join(SAVE, MOD, "settings.json")
         settings = jload(settings_path) if os.path.exists(settings_path) else {}
         settings.update({"enabled": not a.no_macro, "action": "start_recording" if a.record else "run_macro", "stop-on-end": True, "frame-locked": True, "trace-steps": a.trace, "queue-inputs": a.queue, "substep-clicks": a.cbs, "speed-multiplier": a.bw_speed, 
-                         "blockwork-dir": "Z:\\home\\treetrain1\\.config"})
+                         "blockwork-dir": BLOCKWORK_DIR})
         if a.offset is not None:
             settings["frame-offset"] = a.offset
         else:

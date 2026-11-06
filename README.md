@@ -17,7 +17,7 @@ A [Geode](https://geode-sdk.org) mod that runs and records [Blockwork](https://g
 
 ## Building
 
-The mod targets Windows (and macOS) Geometry Dash. These steps cross-compile the Windows build from Linux.
+The mod targets Windows Geometry Dash, including under Proton (`resources/linux-input.so` is the Linux-side input helper it starts there). These steps cross-compile the Windows build from Linux; there is no macOS recipe yet.
 
 You need:
 - the [Geode CLI and SDK](https://docs.geode-sdk.org/getting-started/), with `GEODE_SDK` set
@@ -28,7 +28,7 @@ You need:
 Copy `.env.example` to `.env` and fill in the paths, then:
 
 ```sh
-just build     # builds blockwork-ffi from the Blockwork checkout, then the mod
+just build     # builds blockwork-ffi and resources/linux-input.so from the Blockwork checkout, then the mod
 just install   # installs the .geode into your Geode profile
 just run       # install, then launch the game
 just clean
@@ -42,6 +42,6 @@ The release workflow (`.github/workflows/multi-platform.yml`, run by hand with a
 
 The scripts assume Linux, Steam and Proton, and the Python ones use `evdev` for a virtual keyboard.
 
-- `scripts/autotest.py [--level ID] [--macro ID] [--runs N]` launches the game, opens a level with a macro running frame-locked, and reports the outcome from the Geode log. It turns QOL mod's safe mode on and disables timing mods for the run.
+- `scripts/autotest.py [--level ID] [--macro ID] [--runs N]` launches the game, opens a level with a macro running frame-locked, and reports the outcome from the Geode log. It turns QOL mod's safe mode on and disables timing mods for the run (restored afterwards), and overwrites this mod's own settings. `GD_DIR`, `GD_MOD_SAVES` and `BLOCKWORK_DIR` override the Steam, save and Blockwork config paths. Its defaults name a local level ("Bloodbath 2") and macro ("Bloodbath (frame-locked)"); pass `--local ""` and `--source` to use others.
 - `scripts/inputgen.py MACRO_JSON` presses Space on a macro's schedule, paced by the step counter the mod writes to `/tmp/bw_step.txt`.
 - `scripts/strayinput.py [SECONDS]` presses Space at random, to check that playback ignores real input.

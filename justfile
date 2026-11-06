@@ -4,7 +4,6 @@ set dotenv-load
 
 export SPLAT_DIR := env_var_or_default("SPLAT_DIR", "")
 export TOOLCHAIN := env_var_or_default("TOOLCHAIN", "")
-export HOST_ARCH := env_var_or_default("HOST_ARCH", "x86_64")
 export BLOCKWORK_REPO := env_var_or_default("BLOCKWORK_REPO", "../Blockwork")
 
 build_dir := "build-win"
@@ -14,10 +13,11 @@ blockwork_ffi_include := BLOCKWORK_REPO / "blockwork-ffi/include"
 
 default: build
 
-# Rebuilds blockwork_ffi.lib (embedded Rust recording/playback engine) - cheap
+# Rebuilds blockwork_ffi.lib (embedded Rust recording/playback engine) and
+# resources/linux-input.so (the Proton input helper mod.json packages) - cheap
 # no-op if src hasn't changed.
 ffi:
-    {{BLOCKWORK_REPO}}/blockwork-ffi/build-windows.sh
+    {{BLOCKWORK_REPO}}/blockwork-ffi/build-windows.sh "{{justfile_directory()}}/resources"
 
 # Configure the cross-compile build directory
 configure: ffi

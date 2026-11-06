@@ -94,3 +94,6 @@ __pycache__/
 
 # Local machine paths for the justfile
 .env
+
+# Built by `just ffi` from the Blockwork checkout
+resources/linux-input.so
