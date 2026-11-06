@@ -91,3 +91,6 @@ winsdk_vfs_overlay.yaml
 # Python bytecode caches
 __pycache__/
 *.py[cod]
+
+# Local machine paths for the justfile
+.env

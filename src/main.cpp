@@ -25,81 +25,46 @@ using namespace geode::prelude;
 
 namespace {
 
-// Routes every `tracing::info!`/`warn!`/etc. call from the Rust side (both
-// blockwork-ffi's own and blockwork-core's, when linked in) into Geode's logger.
-// Without this registered, those calls have no subscriber and are silently
-// dropped — there is no other way to see Rust-side diagnostics (e.g. Wine
-// detection, bridge setup) in Geode's log file.
+// Routes Rust-side tracing output (blockwork-ffi and blockwork-core) into
+// Geode's log; without it those lines are dropped.
 void onMacrosLog(const char* msg) {
     log::info("[blockwork] {}", msg);
 }
 
-// The game's initial boot splash (LoadingLayer) doesn't have all of the UI
-// sprite sheets in CCSpriteFrameCache yet, so building any UI before it hands
-// off to the main menu gets the pink/black missing-texture placeholder
-// instead of the real art. MenuLayer::init is the first reliable, hookable
-// signal that boot has actually finished (LoadingLayer::loadingFinished()
-// itself is inlined in the game binary, so Geode can't hook it directly);
-// it also re-fires every time the player returns to the main menu later,
-// which is harmless since this only ever needs to flip on once.
+// Set by MenuLayer::init, the first hookable point after boot. UI built
+// before then gets missing-texture sprites.
 bool gameFinishedLoading = false;
 
-// Tracks OS-level window focus, kept up to date by the AppDelegate hooks
-// further down (applicationDidEnterBackground/applicationWillEnterForeground).
-// Starts true since the game obviously has focus at launch and neither hook
-// fires just from the process starting up. Checked at attempt start so a
-// level that begins while the player is tabbed out into another window
-// doesn't start recording/running into it; the focus-loss hook itself is
-// what handles focus being lost mid-attempt instead.
+// OS window focus, kept by the AppDelegate hooks. An attempt that starts
+// while tabbed out doesn't record or run.
 bool windowFocused = true;
 
-// Kept alive for the mod's whole lifetime so the listener never gets torn
-// down; ListenerHandle's destructor would otherwise deregister it.
+// Held for the mod's lifetime; dropping a handle deregisters its listener.
 ListenerHandle configPopupCloseListener;
 ListenerHandle macrosPopupCloseListener;
 
-// Tracks the currently-open popup (if any) so pressing the keybind again
-// closes it instead of stacking a duplicate on top. Ref keeps it valid for
-// as long as we hold it; the close listener below clears it once the popup
-// is actually gone (close button, Escape, clicking outside, or our own
-// keyBackClicked() call below).
+// The open settings popup, so the keybind toggles it instead of stacking a
+// second one. Cleared by its close listener.
 Ref<Popup> openConfigPopup;
 
-// Same idea as openConfigPopup, but for MacrosPopup - a plain custom Popup
-// rather than a settings popup, so it has no "unsaved changes" state to
-// worry about; keyBackClicked() closes it outright, no closingX guard needed.
+// The open MacrosPopup, same idea as openConfigPopup.
 Ref<Popup> openMacrosPopup;
 
-// keyBackClicked() doesn't close the settings popup immediately if it has
-// uncommitted changes - it puts up an "Unsaved Changes" confirmation first,
-// and only sends Popup::CloseEvent (which clears openConfigPopup above) once
-// that's resolved. Spamming the hotkey while that confirmation is pending
-// must not call keyBackClicked() again on the same popup: that would stack a
-// second confirmation on top, and two independent Discard clicks each
-// closing the same popup is a use-after-free on the second one. This flag
-// makes every press after the first one a no-op until the popup is
-// confirmed gone.
+// The settings popup may show an "Unsaved Changes" prompt before it closes.
+// Further presses are ignored until it is gone, since a second
+// keyBackClicked() would stack a second prompt and double-close the popup.
 bool closingConfigPopup = false;
 
-// Bound to the "open-config" keybind setting (rebindable from this mod's
-// settings, like any other keybind), which opens the mod's own settings
-// popup - the same one Geode's mod list shows, so there's a single source of
-// truth for the options UI instead of a second one to keep in sync.
-// listenForKeybindSettingPresses already skips text inputs unless the
-// setting opts in, so no manual IME check is needed here.
+// "open-config" keybind: toggles the mod's own settings popup (the one
+// Geode's mod list shows).
 void setupConfigPopupHotkey() {
     listenForKeybindSettingPresses("open-config", [](Keybind const&, bool down, bool repeat, double) {
         if (!down || repeat || !gameFinishedLoading) {
             return;
         }
 
-        // If the scene hosting the popup got torn down without going through
-        // our close path (e.g. the loading screen finishing and handing off
-        // to the menu while the popup was open, opened too early during
-        // boot), the popup is orphaned but not destroyed - our Ref is still
-        // keeping it alive. Trying to close a scene-less zombie popup is
-        // what led to the earlier crash, so just forget about it and treat
-        // this press as opening a fresh one instead.
+        // A popup whose scene was torn down without closing it is orphaned;
+        // closing it crashes, so forget it and open a fresh one.
         if (openConfigPopup && !openConfigPopup->getParent()) {
             openConfigPopup = nullptr;
             closingConfigPopup = false;
@@ -130,11 +95,7 @@ void setupConfigPopupHotkey() {
     });
 }
 
-// Bound to the "open-macros" keybind setting, opening the macro
-// creation/selection/clear panel (MacrosPopup). Simpler than
-// setupConfigPopupHotkey above since MacrosPopup is a plain Popup with no
-// unsaved-changes prompt on close - keyBackClicked() always closes it
-// immediately, so there's no closing-in-progress state to guard against.
+// "open-macros" keybind: toggles MacrosPopup, which closes at once.
 void setupMacrosPopupHotkey() {
     listenForKeybindSettingPresses("open-macros", [](Keybind const&, bool down, bool repeat, double) {
         if (!down || repeat || !gameFinishedLoading) {
@@ -163,74 +124,26 @@ void setupMacrosPopupHotkey() {
     });
 }
 
-// init()/resetLevel() only arm this; the actual start command is sent once
-// GJBaseGameLayer::update() observes the level's own clock (m_gameState.
-// m_levelTime) actually ticking. A retry has no loading to do, so that
-// happens on the very next tick. A fresh level entry sits behind a scene
-// fade-in and, for a not-yet-cached song, an audio-load delay of variable
-// length - m_levelTime stays at 0 the whole time, so waiting for it to move
-// lines the signal up with when gameplay is actually simulating in both
-// cases, instead of guessing at a fixed number of ticks or lifecycle hooks.
+// Armed by init()/resetLevel(). The start is sent once update() sees the
+// level clock (m_levelTime) move, which waits out fade-in and song loading.
 bool waitingForAttemptStart = false;
 
-// Real time (accumulated dt, not tick count) since m_levelTime first ticked
-// positive. A fresh entry can still be finishing texture decompression and
-// sprite-cache population for a moment right as gameplay starts, which
-// briefly slows real-world tick time even though the level clock itself is
-// already moving - a retry has no such contention. Blockwork's recording clock
-// is wall-clock, not level-time, so sending the start trigger mid-hitch
-// bakes that attempt-1-only stutter straight into the first recorded Wait.
-//
-// This used to require a streak of consecutive un-hitched ticks instead of
-// a flat time budget, but that made the trigger's own timing noisy: any
-// single stray slow tick - for reasons that have nothing to do with loading
-// (OS scheduling, monitor refresh jitter, background disk I/O) - reset the
-// streak and pushed the trigger out further, so the delay before it fired
-// varied attempt to attempt instead of staying constant. Unconditionally
-// waiting out a fixed grace period is deterministic in *intent*: every
-// attempt, fresh or retry, is meant to get exactly the same delay after
-// gameplay visually starts.
-//
-// In practice this check only runs once per frame, so the trigger still
-// fires on whichever frame's update() first pushes the running total past
-// kStartGracePeriod - overshooting the exact mark by that frame's own dt,
-// which is normally sub-frame noise but grows in lockstep with frame-time
-// variance (a Proton/translation-layer stutter landing on this exact frame
-// bakes its whole dt into the overshoot). sendAttemptStart() is handed that
-// overshoot and forwards it to blockwork_run_macro so the Rust side can
-// backdate the run's own timeline to the *intended* instant instead of
-// baking this frame-quantization error into it on top of its own dispatch
-// latency.
+// Real time since the level clock started. The start waits a fixed grace
+// period so a fresh entry's loading hitches don't land in the recording.
+// The frame that crosses it passes its overshoot to blockwork_run_macro, which
+// backdates the run to the intended instant.
 double elapsedSinceLevelStart = 0.0;
 constexpr double kStartGracePeriod = 0.2; // seconds
 
-// destroyPlayer() (death) and resetLevel() (death's delayed restart, or a
-// manual retry) can both want to end the same attempt. This dedupes so
-// death only sends the stop command once, right away, instead of again
-// when resetLevel() follows it.
+// Death and the resetLevel() after it both end the attempt; send the stop once.
 bool attemptEndSent = false;
 
-// Captured once in sendAttemptStart() and reused (not re-read) in
-// sendAttemptEnd() — the "action" setting is a live dropdown the user can
-// change at any time, including mid-attempt while a recording is still
-// active. Re-reading it fresh at end-time meant switching the setting
-// before backing out of the level would call stop_loop instead of
-// stop_recording, silently orphaning the in-progress recording (it just
-// stayed active forever, capturing into a queue nothing ever drained).
-// Pairing start/end to the same value fixes that regardless of what the
-// user does to the setting mid-attempt.
+// The "action" setting as it was at attempt start, so the matching stop is
+// sent even if the setting changes mid-attempt.
 std::string currentAttemptAction;
 
-// Same capture-once-reuse-at-end reasoning as currentAttemptAction above,
-// applied to whether this attempt actually started anything - true only if
-// both the "enabled" setting and windowFocused held at attempt-start time.
-// If the user flips "enabled" off, or the window loses focus, mid-attempt
-// after a recording/run already started while both were fine,
-// sendAttemptEnd() still has to send the matching stop - otherwise that
-// recording/run is orphaned exactly like a mid-attempt "action" switch
-// would orphan it. Conversely, if either was false at attempt start
-// (nothing was ever sent), the end must stay a no-op even if both go back
-// to true before the attempt finishes.
+// Whether this attempt started anything (enabled and focused at start). The
+// end sends a stop exactly when the start did.
 bool currentAttemptMacrosEnabled = false;
 
 
